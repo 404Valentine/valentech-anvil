@@ -39,4 +39,4 @@ Set-Content $STATE $blank -NoNewline
 # Launch window hidden
 $wshell = New-Object -ComObject WScript.Shell
 $wshell.Run("wscript.exe `"$VBS`" `"$WIN`"", 0, $false)
-Write-Output "ValenTech World Builder launched."
+Write-Output "ValenTech Anvil launched."

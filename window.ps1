@@ -57,7 +57,7 @@ function Get-NodeColor([string]$t) {
 
 # ── Form ──────────────────────────────────────────────────────────────────────
 $form = New-Object System.Windows.Forms.Form
-$form.Text            = "ValenTech World Builder"
+$form.Text            = "ValenTech Anvil"
 $form.BackColor       = $BG
 $iconFile = Join-Path $ROOT "valentech.ico"
 if (Test-Path $iconFile) { $form.Icon = New-Object System.Drawing.Icon($iconFile) }
@@ -94,7 +94,7 @@ $form.Controls.Add($titleBar)
 
 $lblTitle = New-Object System.Windows.Forms.Label
 $lblTitle.Dock      = 'Fill'
-$lblTitle.Text      = 'VALENTECH WORLD BUILDER'
+$lblTitle.Text      = 'VALENTECH ANVIL'
 $lblTitle.TextAlign = 'MiddleCenter'
 $lblTitle.ForeColor = $TEXT_HI
 $lblTitle.Font      = New-Object System.Drawing.Font('Consolas', 14, [System.Drawing.FontStyle]::Bold)
