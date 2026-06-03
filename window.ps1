@@ -349,6 +349,17 @@ $checkPanel.AutoScroll = $false
 $checkPanel.SetBounds(0, 0, 780, 0)
 $checkOuter.Controls.Add($checkPanel)
 
+# "More" indicator — shown when checklist overflows
+$moreLabel = New-Object System.Windows.Forms.Label
+$moreLabel.Text      = '▼  scroll for more'
+$moreLabel.Font      = New-Object System.Drawing.Font('Consolas', 8)
+$moreLabel.ForeColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
+$moreLabel.AutoSize  = $false
+$moreLabel.TextAlign = 'MiddleCenter'
+$moreLabel.SetBounds(12, 247, 800, 16)
+$moreLabel.Visible   = $false
+$proposalPanel.Controls.Add($moreLabel)
+
 # Keep a stub descBox reference so existing code that sets .Text still works
 $descBox = $propDescL
 
@@ -374,7 +385,9 @@ function Relayout {
     $checkOuter.Width    = $RIGHT_W - 24
     $checkOuter.Top      = 115
     $checkOuter.Height   = 130
-    $checkPanel.Width    = $RIGHT_W - 44   # narrower to leave room for scrollbar
+    $checkPanel.Width    = $RIGHT_W - 44
+    $moreLabel.Width     = $RIGHT_W - 24
+    $moreLabel.Top       = $checkOuter.Top + $checkOuter.Height + 2
 }
 
 $body.Add_Resize({ Relayout })
@@ -1494,9 +1507,11 @@ $stateTimer.Add_Tick({
                 $script:checkboxes.Add($cb)
                 $cy += 28
             }
-            $checkPanel.Height = $cy   # grow inner panel so checkOuter scrolls
+            $checkPanel.Height = $cy
+            $moreLabel.Visible = ($cy -gt $checkOuter.Height)
         } else {
-            # No components — nothing to do, layout unchanged
+            $checkPanel.Height = 0
+            $moreLabel.Visible = $false
         }
         Set-Buttons-Waiting
     }
