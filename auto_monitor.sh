@@ -3,7 +3,7 @@
 # Detects CrafterTech launches, runs the inner monitor while the window is open,
 # then goes back to watching for the next launch. Never needs to be restarted.
 
-ROOT="C:/Users/404Tr/OneDrive/Documents/Game Engine/tools/crafter_tech"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCH_F="$ROOT/launch_ts.txt"
 PID_F="$ROOT/window.pid"
 MONITOR="$ROOT/monitor.sh"

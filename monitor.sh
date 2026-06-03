@@ -2,8 +2,9 @@
 # Fires NODE_SELECTED, SIM_ISSUES_REPORTED, GENERATE_FRAMEWORK events.
 # Exits automatically when the CrafterTech window closes.
 
-STATE="C:/Users/404Tr/OneDrive/Documents/Game Engine/tools/crafter_tech/state.json"
-PID_F="C:/Users/404Tr/OneDrive/Documents/Game Engine/tools/crafter_tech/window.pid"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATE="$ROOT/state.json"
+PID_F="$ROOT/window.pid"
 
 LAST_REQ_TS=0
 LAST_SIM_TS=0
