@@ -22,6 +22,7 @@ $script:gddFileName        = ""
 $script:lastFrameworkPath  = ""
 $script:checkboxes         = [System.Collections.Generic.List[System.Windows.Forms.CheckBox]]::new()
 $script:stateLastWrite     = [datetime]::MinValue
+$script:nodeSelectedAt     = [datetime]::MinValue
 
 $TREE_W = 320
 $GAP    = 8
@@ -991,6 +992,7 @@ function Select-Node([hashtable]$n) {
 
     $secLabel = if ($n.sectionId) { ($script:sections | Where-Object { $_.id -eq $n.sectionId } | Select-Object -First 1).label } else { '' }
     $descBox.Text = $(if ($secLabel) { "[ $secLabel ]" } else { "" }) + "  " + $n.label + "`n`nWaiting for proposals..."
+    $script:nodeSelectedAt = [datetime]::UtcNow
     Set-Buttons-Idle
     Start-SimType 'waiting_pulse' @{}
 }
@@ -1442,6 +1444,15 @@ function Draw-Sim {
 $stateTimer = New-Object System.Windows.Forms.Timer
 $stateTimer.Interval = 300
 $stateTimer.Add_Tick({
+    # Show monitor warning if a node has been waiting >10s with no proposal
+    if ($script:nodeSelectedAt -ne [datetime]::MinValue -and
+        -not $script:currentTitle -and
+        ([datetime]::UtcNow - $script:nodeSelectedAt).TotalSeconds -gt 10) {
+        $descBox.ForeColor = $AMBER
+        $descBox.Text = "Monitor not running.`n`nTell Claude: `"start the ValenTech Anvil monitor`""
+        $script:nodeSelectedAt = [datetime]::MinValue
+    }
+
     # Skip if state.json hasn't changed since last read
     $fi = Get-Item $STATE -ErrorAction SilentlyContinue
     if (-not $fi -or $fi.LastWriteTime -le $script:stateLastWrite) { return }
@@ -1476,8 +1487,10 @@ $stateTimer.Add_Tick({
         } catch { Start-SimType 'waiting_pulse' @{} }
 
         # Build checklist
-        $propTitleL.Text = $title
-        $propDescL.Text  = $content
+        $script:nodeSelectedAt = [datetime]::MinValue
+        $propTitleL.Text   = $title
+        $propDescL.ForeColor = $TEXT_MID
+        $propDescL.Text    = $content
         $checkPanel.Controls.Clear()
         $script:checkboxes.Clear()
         $comps = @($obj.components)
