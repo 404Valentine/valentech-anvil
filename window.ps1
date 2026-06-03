@@ -311,7 +311,6 @@ $body.Controls.Add($canvas)
 # Proposal panel replaces plain descBox — shows title, checkboxes, description
 $proposalPanel = New-Object System.Windows.Forms.Panel
 $proposalPanel.BackColor  = $CARD_BG
-$proposalPanel.AutoScroll = $true
 $body.Controls.Add($proposalPanel)
 
 $propTitleL = New-Object System.Windows.Forms.Label
@@ -330,10 +329,16 @@ $propDescL.AutoSize  = $false
 $propDescL.SetBounds(12, 36, 800, 70)
 $proposalPanel.Controls.Add($propDescL)
 
+# Divider between description and checklist
+$checkDivider = New-Object System.Windows.Forms.Panel
+$checkDivider.BackColor = $DIVIDER
+$checkDivider.SetBounds(12, 110, 800, 1)
+$proposalPanel.Controls.Add($checkDivider)
+
 $checkPanel = New-Object System.Windows.Forms.Panel
 $checkPanel.BackColor  = $CARD_BG
 $checkPanel.AutoScroll = $true
-$checkPanel.SetBounds(12, 114, 800, 120)
+$checkPanel.SetBounds(12, 115, 800, 200)
 $proposalPanel.Controls.Add($checkPanel)
 
 # Keep a stub descBox reference so existing code that sets .Text still works
@@ -354,12 +359,13 @@ function Relayout {
 
     $canvas.SetBounds($RIGHT_X, $GAP, $RIGHT_W, $CANVAS_H)
     $proposalPanel.SetBounds($RIGHT_X, ($CANVAS_H + $GAP * 2), $RIGHT_W, $DESC_H)
-    $propTitleL.Width  = $RIGHT_W - 24
-    $propDescL.Width   = $RIGHT_W - 24
-    $propDescL.Height  = 70
-    $checkPanel.Width  = $RIGHT_W - 24
-    $checkPanel.Top    = 114
-    $checkPanel.Height = [Math]::Max(60, $DESC_H - 122)
+    $propTitleL.Width    = $RIGHT_W - 24
+    $propDescL.Width     = $RIGHT_W - 24
+    $propDescL.Height    = 70
+    $checkDivider.Width  = $RIGHT_W - 24
+    $checkPanel.Width    = $RIGHT_W - 24
+    $checkPanel.Top      = 115
+    $checkPanel.Height   = [Math]::Max(200, $DESC_H - 123)
 }
 
 $body.Add_Resize({ Relayout })
