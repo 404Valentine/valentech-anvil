@@ -335,11 +335,19 @@ $checkDivider.BackColor = $DIVIDER
 $checkDivider.SetBounds(12, 110, 800, 1)
 $proposalPanel.Controls.Add($checkDivider)
 
+# Outer panel — fixed height, scrolls vertically
+$checkOuter = New-Object System.Windows.Forms.Panel
+$checkOuter.BackColor  = $CARD_BG
+$checkOuter.AutoScroll = $true
+$checkOuter.SetBounds(12, 115, 800, 130)
+$proposalPanel.Controls.Add($checkOuter)
+
+# Inner panel — grows with checkboxes, never scrolls itself
 $checkPanel = New-Object System.Windows.Forms.Panel
 $checkPanel.BackColor  = $CARD_BG
-$checkPanel.AutoScroll = $true
-$checkPanel.SetBounds(12, 115, 800, 200)
-$proposalPanel.Controls.Add($checkPanel)
+$checkPanel.AutoScroll = $false
+$checkPanel.SetBounds(0, 0, 780, 0)
+$checkOuter.Controls.Add($checkPanel)
 
 # Keep a stub descBox reference so existing code that sets .Text still works
 $descBox = $propDescL
@@ -363,9 +371,10 @@ function Relayout {
     $propDescL.Width     = $RIGHT_W - 24
     $propDescL.Height    = 70
     $checkDivider.Width  = $RIGHT_W - 24
-    $checkPanel.Width    = $RIGHT_W - 24
-    $checkPanel.Top      = 115
-    $checkPanel.Height   = [Math]::Max(200, $DESC_H - 123)
+    $checkOuter.Width    = $RIGHT_W - 24
+    $checkOuter.Top      = 115
+    $checkOuter.Height   = 130
+    $checkPanel.Width    = $RIGHT_W - 44   # narrower to leave room for scrollbar
 }
 
 $body.Add_Resize({ Relayout })
@@ -1485,7 +1494,7 @@ $stateTimer.Add_Tick({
                 $script:checkboxes.Add($cb)
                 $cy += 28
             }
-            # checkPanel height is fixed by Relayout; AutoScroll handles overflow
+            $checkPanel.Height = $cy   # grow inner panel so checkOuter scrolls
         } else {
             # No components — nothing to do, layout unchanged
         }
