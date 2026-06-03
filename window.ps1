@@ -716,90 +716,81 @@ function Parse-GDD([string]$raw) {
 
     Write-StateFields @{ gdd_raw = $raw }
 
-    # Words to strip from headings to leave a clean system name
     $stripWords = @('system','overview','design','details','mechanic','feature','rules','structure',
                     'description','notes','examples','example','function','functions','types','type',
                     'ones','list','open','questions','question','how','work','works','earn','expand',
                     'evaluate','adjust','adjustment','adjustments','reward','rewards',
                     'the','a','an','and','or','of','with','for','in','to','at','by','its','their')
 
-    $seen    = [System.Collections.Generic.HashSet[string]]::new()
-    $systems = [System.Collections.Generic.List[string]]::new()
+    $seen  = [System.Collections.Generic.HashSet[string]]::new()
+    $lines = $raw -split "`n"
 
-    foreach ($line in ($raw -split "`n")) {
-        $l = $line.Trim()
+    # Phase 1 — identify headings with line index
+    $headings = [System.Collections.Generic.List[hashtable]]::new()
+
+    for ($li = 0; $li -lt $lines.Count; $li++) {
+        $l = $lines[$li].Trim()
         if ($l.Length -lt 3) { continue }
 
-        # Only look at heading-style lines: "1. Title", "1.1 Title", "# Title", "## Title"
         $candidate = $null
         if    ($l -match '^\s*\d+[\d.]*\s+(.+)$') { $candidate = $matches[1].Trim() }
         elseif ($l -match '^#{1,3}\s+(.+)$')       { $candidate = $matches[1].Trim() }
         if (-not $candidate) { continue }
 
-        # Clean noise
         if ($candidate -match '[^\x00-\x7F]') { continue }
         if ($candidate -match '^\d+$') { continue }
         if ($candidate.Length -lt 3 -or $candidate.Length -gt 50) { continue }
 
-        # Shorten to a clean system name (strip boilerplate words, keep 1-4 key words)
-        $words = ($candidate -replace '[&\-\(\)\|/]',' ' -split '\s+') | Where-Object { $_.Length -gt 1 }
-        $keyWords = $words | Where-Object {
-            $w = $_.ToLower()
-            $stripWords -notcontains $w -and $w -cmatch '^[A-Za-z]'
-        }
+        $words    = ($candidate -replace '[&\-\(\)\|/]',' ' -split '\s+') | Where-Object { $_.Length -gt 1 }
+        $keyWords = $words | Where-Object { $w = $_.ToLower(); $stripWords -notcontains $w -and $w -cmatch '^[A-Za-z]' }
         if (-not @($keyWords)) { continue }
 
-        # Build name from up to 3 key words, title-cased
         $nameWords = @($keyWords) | Select-Object -First 3
-        $name = ($nameWords | ForEach-Object {
-            $_.Substring(0,1).ToUpper() + $_.Substring(1).ToLower()
-        }) -join ' '
-
+        $name = ($nameWords | ForEach-Object { $_.Substring(0,1).ToUpper() + $_.Substring(1).ToLower() }) -join ' '
         if ($name.Length -lt 4) { continue }
+        if (@($nameWords).Count -lt 2 -and $name.Length -lt 6) { continue }
 
-        # Require at least 2 key words, OR a single word of 6+ chars (e.g. "Genetics", "Compendium")
-        $wordCount = @($nameWords).Count
-        if ($wordCount -lt 2 -and $name.Length -lt 6) { continue }
-
-        # Remove duplicate consecutive words ("Bond Bond" -> "Bond")
         $name = ($name -split ' ' | Select-Object -Unique) -join ' '
-
-        # Drop trailing junk words that survive stripping
-        $junkTrail = @('Physical','Co','Ai','Uncertainty','Ones','Gold','Creature','Function')
-        $namePartsClean = ($name -split ' ') | Where-Object { $junkTrail -notcontains $_ }
-        if (@($namePartsClean).Count -eq 0) { continue }
+        $namePartsClean = ($name -split ' ') | Where-Object { @('Physical','Co','Ai','Uncertainty','Ones','Gold','Creature','Function') -notcontains $_ }
+        if (-not @($namePartsClean)) { continue }
         $name = $namePartsClean -join ' '
         if ($name.Length -lt 4) { continue }
 
-        # Fix known compound words split by PDF: "Co Op" -> "Co-op"
-        $name = $name -replace '\bCo Op\b', 'Co-op'
-        $name = $name -replace '\bRanch Tycoon\b', 'Ranch Management'
-        $name = $name -replace '\bAdventure Exploration\b', 'Exploration'
-        $name = $name -replace '\bCore Pillars\b', 'Core Loop'
-        $name = $name -replace '\bBuilding Bond\b', 'Bond Building'
-        $name = $name -replace '\bPerspective Camera\b', 'Camera System'
-        $name = $name -replace '\bCreature Behaviour\b', 'Creature AI'
-        $name = $name -replace '\bBond Breeding\b', 'Breeding Bonds'
+        $name = $name -replace '\bCo Op\b','Co-op' -replace '\bRanch Tycoon\b','Ranch Management' `
+                      -replace '\bAdventure Exploration\b','Exploration' -replace '\bCore Pillars\b','Core Loop' `
+                      -replace '\bBuilding Bond\b','Bond Building' -replace '\bPerspective Camera\b','Camera System' `
+                      -replace '\bCreature Behaviour\b','Creature AI' -replace '\bBond Breeding\b','Breeding Bonds'
 
-        $key = $name.ToLower()
-        if (-not $seen.Add($key)) { continue }
-
-        $systems.Add($name)
+        if (-not $seen.Add($name.ToLower())) { continue }
+        $headings.Add(@{ idx=$li; name=$name })
     }
 
-    # Build section objects with semantic category colors
-    foreach ($name in $systems) {
-        $cat = Get-SystemCategory $name
+    # Phase 2 — extract GDD body excerpt for each heading (text between this heading and the next)
+    for ($hi = 0; $hi -lt $headings.Count; $hi++) {
+        $start  = $headings[$hi].idx + 1
+        $end    = if ($hi + 1 -lt $headings.Count) { $headings[$hi+1].idx } else { [Math]::Min($lines.Count, $start + 40) }
+        $parts  = for ($bi = $start; $bi -lt $end; $bi++) {
+            $bl = $lines[$bi].Trim()
+            if ($bl.Length -gt 5 -and $bl -notmatch '^[#\d]' -and $bl -notmatch '[^\x00-\x7F]') { $bl }
+        }
+        $excerpt = (($parts -join ' ') -replace '\s+', ' ').Trim()
+        if ($excerpt.Length -gt 600) { $excerpt = $excerpt.Substring(0, 600) }
+        $headings[$hi].excerpt = $excerpt
+    }
+
+    # Phase 3 — build section objects with category colors and GDD excerpt
+    foreach ($h in $headings) {
+        $cat = Get-SystemCategory $h.name
         $col = Get-CategoryColor $cat
-        $sec = @{
+        $script:sections.Add(@{
             id        = 'sys_' + [System.Guid]::NewGuid().ToString('N').Substring(0,6)
-            label     = $name
+            label     = $h.name
+            excerpt   = $h.excerpt
             color     = $col
             category  = $cat
             features  = [System.Collections.Generic.List[hashtable]]::new()
             collapsed = $false
-        }
-        $script:sections.Add($sec)
+        })
     }
 
     # Sort sections by category in rainbow order
@@ -810,7 +801,6 @@ function Parse-GDD([string]$raw) {
 
     Rebuild-NodeList
 
-    # Write nodes as a proper JSON array (no manual escaping); @() ensures [] not null when empty
     $nodesArr = @($script:sections | ForEach-Object {
         @{ id=$_.id; label=$_.label; type='system'; confirmed=$false; sectionId=$_.id }
     })
@@ -983,11 +973,13 @@ function Select-Node([hashtable]$n) {
         }
     }
 
+    $sec = $script:sections | Where-Object { $_.id -eq $n.id } | Select-Object -First 1
     Write-StateFields @{
         request       = $n.label
         request_ts    = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         selected_node = $n.id
         response      = ''
+        gdd_section   = if ($sec -and $sec.excerpt) { $sec.excerpt } else { '' }
     }
 
     $secLabel = if ($n.sectionId) { ($script:sections | Where-Object { $_.id -eq $n.sectionId } | Select-Object -First 1).label } else { '' }

@@ -21,7 +21,11 @@ If the user says "proposals not working", "monitor not running", or "start the m
 ## Event loop
 
 ### NODE_SELECTED
-When you receive `NODE_SELECTED ts=<ts> node=<id> request=<label>`, immediately call propose_one.ps1:
+When you receive `NODE_SELECTED ts=<ts> node=<id> request=<label>`:
+
+1. **Read state.json first** and extract `gdd_section` — this is the actual GDD text for that system
+2. Use it to tailor your proposal: the Title, Content, Sim type, and Components should all reflect what the GDD *actually says* about that system, not just what its name implies
+3. Then call propose_one.ps1:
 
 ```powershell
 $dec = & ".\propose_one.ps1" `

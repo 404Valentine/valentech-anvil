@@ -28,6 +28,7 @@ $blank = @'
   "generate_ts":    0,
   "gdd_filename":   "",
   "framework_path": "",
+  "gdd_section":    "",
   "components":     []
 }
 '@
