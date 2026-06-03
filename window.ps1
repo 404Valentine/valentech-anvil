@@ -21,6 +21,7 @@ $script:currentContent     = ""
 $script:gddFileName        = ""
 $script:lastFrameworkPath  = ""
 $script:checkboxes         = [System.Collections.Generic.List[System.Windows.Forms.CheckBox]]::new()
+$script:stateLastWrite     = [datetime]::MinValue
 
 $TREE_W = 320
 $GAP    = 8
@@ -31,7 +32,6 @@ $PANEL_BG = [System.Drawing.Color]::FromArgb( 14,  14,  14)
 $BAR_BG   = [System.Drawing.Color]::FromArgb( 10,  10,  10)
 $CARD_BG  = [System.Drawing.Color]::FromArgb( 22,  22,  22)
 $DIVIDER  = [System.Drawing.Color]::FromArgb( 32,  32,  32)
-$ACCENT   = [System.Drawing.Color]::FromArgb(255, 255, 255)
 $TEXT_HI  = [System.Drawing.Color]::FromArgb(255, 255, 255)
 $TEXT_DIM = [System.Drawing.Color]::FromArgb( 70,  70,  70)
 $TEXT_MID = [System.Drawing.Color]::FromArgb(150, 150, 150)
@@ -419,8 +419,7 @@ function Write-Response([string]$val) {
 
 function Save-SimIssues {
     if ($script:simIssues.Count -eq 0) { return }
-    $esc = $script:simIssues | ForEach-Object { '"' + $_.Replace('"','\"') + '"' }
-    Set-Content $SIM_ISSUES_F ('[' + ($esc -join ',') + ']') -NoNewline
+    $script:simIssues | ConvertTo-Json -Compress | Set-Content $SIM_ISSUES_F -NoNewline
 }
 
 function Update-FrameworkButton {
@@ -504,7 +503,8 @@ $browseBtn.Add_Click({
     $ofd = New-Object System.Windows.Forms.OpenFileDialog
     $ofd.Title  = "Select GDD File"
     $ofd.Filter = "All GDD Files (*.pdf;*.txt;*.md;*.markdown)|*.pdf;*.txt;*.md;*.markdown|PDF (*.pdf)|*.pdf|Text & Markdown (*.txt;*.md)|*.txt;*.md|All Files (*.*)|*.*"
-    $ofd.InitialDirectory = "C:\Users\404Tr\OneDrive\Documents\GDDs"
+    $gddDir = Join-Path ([Environment]::GetFolderPath('MyDocuments')) "GDDs"
+    $ofd.InitialDirectory = if (Test-Path $gddDir) { $gddDir } else { [Environment]::GetFolderPath('MyDocuments') }
     if ($ofd.ShowDialog() -eq 'OK') {
         $path = $ofd.FileName
         $shortName = [System.IO.Path]::GetFileName($path)
@@ -576,7 +576,7 @@ function Save-Features {
     foreach ($sec in $script:sections) {
         if ($sec.features.Count -gt 0) {
             $obj[$sec.label] = @($sec.features | ForEach-Object {
-                @{ title=$_.label; desc=if($_.desc){$_.desc}else{""} }
+                @{ title=$_.label; desc=[string]$_.desc }
             })
         }
     }
@@ -667,7 +667,7 @@ function Open-SavesPanel {
     $openBtn.DialogResult = 'OK'; $dlg.Controls.Add($openBtn); $dlg.AcceptButton = $openBtn
     $list.Add_DoubleClick({ $dlg.DialogResult = 'OK'; $dlg.Close() })
     if ($dlg.ShowDialog() -ne 'OK' -or $list.SelectedIndex -lt 0) { $dlg.Dispose(); return }
-    $selected = $saves[$list.SelectedIndex]
+    $selected = @($saves)[$list.SelectedIndex]
     $dlg.Dispose()
     try {
         $data = Get-Content $selected.FullName -Raw | ConvertFrom-Json
@@ -723,22 +723,13 @@ function Parse-GDD([string]$raw) {
         if ($l.Length -lt 3) { continue }
 
         # Only look at heading-style lines: "1. Title", "1.1 Title", "# Title", "## Title"
-        $isHeading = $false
-        $candidate = $l
-
-        if ($l -match '^\s*(\d+\.[\d\.]*)\s+(.+)$') {
-            $candidate = $matches[2].Trim()
-            $isHeading = $true
-        } elseif ($l -match '^#{1,3}\s+(.+)$') {
-            $candidate = $matches[1].Trim()
-            $isHeading = $true
-        }
-
-        if (-not $isHeading) { continue }
+        $candidate = $null
+        if    ($l -match '^\s*\d+[\d.]*\s+(.+)$') { $candidate = $matches[1].Trim() }
+        elseif ($l -match '^#{1,3}\s+(.+)$')       { $candidate = $matches[1].Trim() }
+        if (-not $candidate) { continue }
 
         # Clean noise
-        $nonAscii = ($candidate.ToCharArray() | Where-Object { [int]$_ -gt 127 }).Count
-        if ($nonAscii -gt 0) { continue }
+        if ($candidate -match '[^\x00-\x7F]') { continue }
         if ($candidate -match '^\d+$') { continue }
         if ($candidate.Length -lt 3 -or $candidate.Length -gt 50) { continue }
 
@@ -748,7 +739,7 @@ function Parse-GDD([string]$raw) {
             $w = $_.ToLower()
             $stripWords -notcontains $w -and $w -cmatch '^[A-Za-z]'
         }
-        if (-not $keyWords -or @($keyWords).Count -eq 0) { continue }
+        if (-not @($keyWords)) { continue }
 
         # Build name from up to 3 key words, title-cased
         $nameWords = @($keyWords) | Select-Object -First 3
@@ -763,9 +754,7 @@ function Parse-GDD([string]$raw) {
         if ($wordCount -lt 2 -and $name.Length -lt 6) { continue }
 
         # Remove duplicate consecutive words ("Bond Bond" -> "Bond")
-        $dedupWords = @()
-        foreach ($w in ($name -split ' ')) { if ($dedupWords -notcontains $w) { $dedupWords += $w } }
-        $name = $dedupWords -join ' '
+        $name = ($name -split ' ' | Select-Object -Unique) -join ' '
 
         # Drop trailing junk words that survive stripping
         $junkTrail = @('Physical','Co','Ai','Uncertainty','Ones','Gold','Creature','Function')
@@ -907,7 +896,7 @@ function Rebuild-NodeList {
                 $frow = New-Object System.Windows.Forms.Panel
                 $frow.Width  = $TREE_W - 12
                 $frow.Height = 24
-                $frow.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 0)
+                $frow.Margin = [System.Windows.Forms.Padding]::Empty
                 $frow.BackColor = $CARD_BG
                 $frow.Tag    = $feat
                 $frow.Cursor = [System.Windows.Forms.Cursors]::Hand
@@ -983,7 +972,7 @@ function Select-Node([hashtable]$n) {
         }
     }
     foreach ($ctrl in $nodeFlow.Controls) {
-        if ($ctrl.Tag -and $ctrl.Tag.id -eq $n.id) {
+        if ($ctrl.Tag -and $ctrl.Tag.color -and $ctrl.Tag.id -eq $n.id) {
             $ctrl.BackColor = [System.Drawing.Color]::FromArgb(0, 40, 60); break
         }
     }
@@ -1449,14 +1438,20 @@ function Draw-Sim {
         }
     }
 
+    $old = $canvas.Image
     $canvas.Image = $bmp
     $g.Dispose()
+    if ($old) { $old.Dispose() }
 }
 
 # ── State poll ────────────────────────────────────────────────────────────────
 $stateTimer = New-Object System.Windows.Forms.Timer
 $stateTimer.Interval = 300
 $stateTimer.Add_Tick({
+    # Skip if state.json hasn't changed since last read
+    $fi = Get-Item $STATE -ErrorAction SilentlyContinue
+    if (-not $fi -or $fi.LastWriteTime -le $script:stateLastWrite) { return }
+    $script:stateLastWrite = $fi.LastWriteTime
     $obj = Read-State; if (-not $obj) { return }
     $resp    = [string]$obj.response
     $title   = [string]$obj.title

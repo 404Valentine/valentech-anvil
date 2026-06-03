@@ -3,7 +3,7 @@ param(
     [string]$OutputPath
 )
 $STATE   = Join-Path $PSScriptRoot "state.json"
-$allowed = [System.IO.Path]::GetFullPath("C:\Users\404Tr\OneDrive\Documents")
+$allowed = [System.IO.Path]::GetFullPath([Environment]::GetFolderPath('MyDocuments'))
 
 # SEC-02: Validate output path is within the allowed directory
 $resolved = try { [System.IO.Path]::GetFullPath($OutputPath) } catch { "" }
