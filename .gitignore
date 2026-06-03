@@ -1,0 +1,12 @@
+# Runtime state — never commit
+state.json
+launch_ts.txt
+window.pid
+sim_issues.json
+
+# User data
+features.json
+saves/
+
+# Temp files
+*.tmp
