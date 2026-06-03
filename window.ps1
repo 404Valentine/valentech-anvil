@@ -44,6 +44,13 @@ $SYS_COL  = [System.Drawing.Color]::FromArgb(180,   0, 255)
 $LOOP_COL = [System.Drawing.Color]::FromArgb(  0, 255, 140)
 $META_COL = [System.Drawing.Color]::FromArgb(255, 200,   0)
 
+# Cached fonts for sim rendering — created once, disposed on form close
+$script:fnt7B = New-Object System.Drawing.Font('Consolas', 7, [System.Drawing.FontStyle]::Bold)
+$script:fnt7  = New-Object System.Drawing.Font('Consolas', 7)
+$script:fnt8B = New-Object System.Drawing.Font('Consolas', 8, [System.Drawing.FontStyle]::Bold)
+$script:fnt8  = New-Object System.Drawing.Font('Consolas', 8)
+$script:fnt11 = New-Object System.Drawing.Font('Consolas', 11)
+
 function Get-NodeColor([string]$t) {
     switch ($t) {
         'mechanic' { return $MECH_COL }
@@ -964,16 +971,14 @@ function Select-Node([hashtable]$n) {
     if (-not $n) { return }
     $script:currentNode = $n.id
 
-    # Highlight selected system row
+    # Highlight selected system row — single pass
     foreach ($ctrl in $nodeFlow.Controls) {
-        if ($ctrl.Tag -and $ctrl.Tag.color) {
-            $c = $ctrl.Tag.color
-            $ctrl.BackColor = [System.Drawing.Color]::FromArgb(20, $c.R, $c.G, $c.B)
-        }
-    }
-    foreach ($ctrl in $nodeFlow.Controls) {
-        if ($ctrl.Tag -and $ctrl.Tag.color -and $ctrl.Tag.id -eq $n.id) {
-            $ctrl.BackColor = [System.Drawing.Color]::FromArgb(0, 40, 60); break
+        if (-not ($ctrl.Tag -and $ctrl.Tag.color)) { continue }
+        $c = $ctrl.Tag.color
+        $ctrl.BackColor = if ($ctrl.Tag.id -eq $n.id) {
+            [System.Drawing.Color]::FromArgb(0, 40, 60)
+        } else {
+            [System.Drawing.Color]::FromArgb(20, $c.R, $c.G, $c.B)
         }
     }
 
@@ -1019,10 +1024,10 @@ function Draw-Sim {
             $pen2 = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb([int]($alpha*0.5), 180, 0, 255), 1)
             $g.DrawEllipse($pen2, ($cx-$r2), ($cy-$r2), $r2*2, $r2*2)
             $pen2.Dispose()
-            $font = New-Object System.Drawing.Font("Consolas", 11)
-            $br   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(100, 0, 200, 255))
-            $g.DrawString("SELECT A NODE", $font, $br, ($cx - 70), ($cy + $r + 14))
-            $font.Dispose(); $br.Dispose()
+            $br  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(100, 0, 200, 255))
+            $sz  = $g.MeasureString("SELECT A NODE", $script:fnt11)
+            $g.DrawString("SELECT A NODE", $script:fnt11, $br, ($cx - $sz.Width/2), ($cy + $r + 14))
+            $br.Dispose()
         }
 
         'loop_diagram' {
@@ -1034,6 +1039,8 @@ function Draw-Sim {
             $speed    = if ($p.speed)     { [double]$p.speed } else { 0.4 }
             $pulsePos = ($t * $speed) % 1.0
 
+            $ep = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(50,0,200,255),1)
+            $pb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(220,0,255,180))
             for ($i = 0; $i -lt $count; $i++) {
                 $angle = 2*[Math]::PI*$i/$count - [Math]::PI/2
                 $nx  = [int]($cx + $radius*[Math]::Cos($angle))
@@ -1043,13 +1050,11 @@ function Draw-Sim {
                 $nx2 = [int]($cx + $radius*[Math]::Cos($na))
                 $ny2 = [int]($cy + $radius*[Math]::Sin($na))
 
-                $ep = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(50,0,200,255),1)
-                $g.DrawLine($ep,$nx,$ny,$nx2,$ny2); $ep.Dispose()
+                $g.DrawLine($ep,$nx,$ny,$nx2,$ny2)
 
                 $px = [int]($nx + ($nx2-$nx)*$pulsePos)
                 $py = [int]($ny + ($ny2-$ny)*$pulsePos)
-                $pb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(220,0,255,180))
-                $g.FillEllipse($pb,($px-5),($py-5),10,10); $pb.Dispose()
+                $g.FillEllipse($pb,($px-5),($py-5),10,10)
 
                 $col = if ($p.nodeTypes -and $p.nodeTypes[$i]) { Get-NodeColor $p.nodeTypes[$i] } else { $MECH_COL }
                 $nb  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(30,$col.R,$col.G,$col.B))
@@ -1058,13 +1063,13 @@ function Draw-Sim {
                 $g.DrawEllipse($np,($nx-$dotR),($ny-$dotR),$dotR*2,$dotR*2)
                 $nb.Dispose(); $np.Dispose()
 
-                $lf = New-Object System.Drawing.Font("Consolas",7,[System.Drawing.FontStyle]::Bold)
-                $lb = New-Object System.Drawing.SolidBrush($col)
+                $lb   = New-Object System.Drawing.SolidBrush($col)
                 $lstr = if ($labels[$i]) { $labels[$i] } else { "NODE" }
-                $sz = $g.MeasureString($lstr,$lf)
-                $g.DrawString($lstr,$lf,$lb,($nx-$sz.Width/2),($ny-$sz.Height/2))
-                $lf.Dispose(); $lb.Dispose()
+                $sz   = $g.MeasureString($lstr,$script:fnt7B)
+                $g.DrawString($lstr,$script:fnt7B,$lb,($nx-$sz.Width/2),($ny-$sz.Height/2))
+                $lb.Dispose()
             }
+            $ep.Dispose(); $pb.Dispose()
         }
 
         'progression_curve' {
@@ -1105,19 +1110,19 @@ function Draw-Sim {
                 $hb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,$col.R,$col.G,$col.B))
                 $g.FillEllipse($hb,($hp.X-4),($hp.Y-4),8,8); $hb.Dispose()
             }
-            $mf = New-Object System.Drawing.Font("Consolas",7); $maxM = $mils[$mils.Count-1]
+            $maxM = $mils[$mils.Count-1]
+            $mp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(120,255,200,0),1)
+            $mb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,255,200,0))
             foreach ($m in $mils) {
                 $xn=$m/$maxM; if($xn-gt $prog){continue}
                 $mx=$pad+[int]($xn*$gw)
-                $mp=New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(120,255,200,0),1)
-                $g.DrawLine($mp,$mx,$pad,$mx,$pad+$gh); $mp.Dispose()
-                $mb=New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,255,200,0))
-                $g.DrawString([string]$m,$mf,$mb,($mx+2),($pad+4)); $mb.Dispose()
-            }; $mf.Dispose()
-            $lf=New-Object System.Drawing.Font("Consolas",8); $lb=New-Object System.Drawing.SolidBrush($TEXT_DIM)
-            $g.DrawString("LEVEL",$lf,$lb,($pad+$gw/2-20),($pad+$gh+14))
-            $g.DrawString("XP",$lf,$lb,4,($pad+$gh/2-8))
-            $lf.Dispose(); $lb.Dispose()
+                $g.DrawLine($mp,$mx,$pad,$mx,$pad+$gh)
+                $g.DrawString([string]$m,$script:fnt7,$mb,($mx+2),($pad+4))
+            }; $mp.Dispose(); $mb.Dispose()
+            $lb = New-Object System.Drawing.SolidBrush($TEXT_DIM)
+            $g.DrawString("LEVEL",$script:fnt8,$lb,($pad+$gw/2-20),($pad+$gh+14))
+            $g.DrawString("XP",$script:fnt8,$lb,4,($pad+$gh/2-8))
+            $lb.Dispose()
         }
 
         'economy_flow' {
@@ -1128,51 +1133,48 @@ function Draw-Sim {
             $srcX   = [int]($cw*0.2); $snkX=[int]($cw*0.8)
             $bW=70; $bH=26; $pulseT=($t*0.5)%1.0
 
+            $sb  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(30,0,200,255))
+            $sp  = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(180,0,200,255),1)
+            $sbr = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,0,200,255))
+            $lp  = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(40,0,200,255),1)
+            $pbr = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,0,255,200))
             for ($si=0;$si-lt $srcs.Count;$si++) {
                 $sy=[int]($cy-($srcs.Count-1)*30+$si*60)
-                $sb=New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(30,0,200,255))
-                $g.FillRectangle($sb,($srcX-$bW/2),($sy-$bH/2),$bW,$bH); $sb.Dispose()
-                $sp=New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(180,0,200,255),1)
-                $g.DrawRectangle($sp,($srcX-$bW/2),($sy-$bH/2),$bW,$bH); $sp.Dispose()
-                $sf=New-Object System.Drawing.Font("Consolas",7,[System.Drawing.FontStyle]::Bold)
-                $sbr=New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,0,200,255))
-                $ssz=$g.MeasureString($srcs[$si],$sf)
-                $g.DrawString($srcs[$si],$sf,$sbr,($srcX-$ssz.Width/2),($sy-$ssz.Height/2))
-                $sf.Dispose();$sbr.Dispose()
-                $lp=New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(40,0,200,255),1)
-                $g.DrawLine($lp,($srcX+$bW/2),$sy,$cx,$cy); $lp.Dispose()
+                $g.FillRectangle($sb,($srcX-$bW/2),($sy-$bH/2),$bW,$bH)
+                $g.DrawRectangle($sp,($srcX-$bW/2),($sy-$bH/2),$bW,$bH)
+                $ssz=$g.MeasureString($srcs[$si],$script:fnt7B)
+                $g.DrawString($srcs[$si],$script:fnt7B,$sbr,($srcX-$ssz.Width/2),($sy-$ssz.Height/2))
+                $g.DrawLine($lp,($srcX+$bW/2),$sy,$cx,$cy)
                 $px2=[int](($srcX+$bW/2)+($cx-$srcX-$bW/2)*$pulseT)
                 $py2=[int]($sy+($cy-$sy)*$pulseT)
-                $pbr=New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,0,255,200))
-                $g.FillEllipse($pbr,($px2-4),($py2-4),8,8); $pbr.Dispose()
+                $g.FillEllipse($pbr,($px2-4),($py2-4),8,8)
             }
+            $sb.Dispose();$sp.Dispose();$sbr.Dispose();$lp.Dispose();$pbr.Dispose()
 
             $hb=New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(40,$col.R,$col.G,$col.B))
             $g.FillEllipse($hb,($cx-22),($cy-22),44,44); $hb.Dispose()
             $hp=New-Object System.Drawing.Pen($col,2)
             $g.DrawEllipse($hp,($cx-22),($cy-22),44,44); $hp.Dispose()
-            $hf=New-Object System.Drawing.Font("Consolas",7,[System.Drawing.FontStyle]::Bold)
-            $hbr=New-Object System.Drawing.SolidBrush($col)
-            $g.DrawString("HUB",$hf,$hbr,($cx-14),($cy-7)); $hf.Dispose();$hbr.Dispose()
+            $hbr = New-Object System.Drawing.SolidBrush($col)
+            $g.DrawString("HUB",$script:fnt7B,$hbr,($cx-14),($cy-7)); $hbr.Dispose()
 
+            $kb   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(30,180,0,255))
+            $kp   = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(180,180,0,255),1)
+            $kbr  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,180,0,255))
+            $lp2  = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(40,180,0,255),1)
+            $pbr3 = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,255,180,0))
             for ($ki=0;$ki-lt $snks.Count;$ki++) {
                 $ky=[int]($cy-($snks.Count-1)*30+$ki*60)
-                $kb=New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(30,180,0,255))
-                $g.FillRectangle($kb,($snkX-$bW/2),($ky-$bH/2),$bW,$bH); $kb.Dispose()
-                $kp=New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(180,180,0,255),1)
-                $g.DrawRectangle($kp,($snkX-$bW/2),($ky-$bH/2),$bW,$bH); $kp.Dispose()
-                $kf=New-Object System.Drawing.Font("Consolas",7,[System.Drawing.FontStyle]::Bold)
-                $kbr=New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,180,0,255))
-                $ksz=$g.MeasureString($snks[$ki],$kf)
-                $g.DrawString($snks[$ki],$kf,$kbr,($snkX-$ksz.Width/2),($ky-$ksz.Height/2))
-                $kf.Dispose();$kbr.Dispose()
-                $lp2=New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(40,180,0,255),1)
-                $g.DrawLine($lp2,$cx,$cy,($snkX-$bW/2),$ky); $lp2.Dispose()
+                $g.FillRectangle($kb,($snkX-$bW/2),($ky-$bH/2),$bW,$bH)
+                $g.DrawRectangle($kp,($snkX-$bW/2),($ky-$bH/2),$bW,$bH)
+                $ksz=$g.MeasureString($snks[$ki],$script:fnt7B)
+                $g.DrawString($snks[$ki],$script:fnt7B,$kbr,($snkX-$ksz.Width/2),($ky-$ksz.Height/2))
+                $g.DrawLine($lp2,$cx,$cy,($snkX-$bW/2),$ky)
                 $px3=[int]($cx+($snkX-$bW/2-$cx)*$pulseT)
                 $py3=[int]($cy+($ky-$cy)*$pulseT)
-                $pbr3=New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,255,180,0))
-                $g.FillEllipse($pbr3,($px3-4),($py3-4),8,8); $pbr3.Dispose()
+                $g.FillEllipse($pbr3,($px3-4),($py3-4),8,8)
             }
+            $kb.Dispose();$kp.Dispose();$kbr.Dispose();$lp2.Dispose();$pbr3.Dispose()
         }
 
         'feature_tree' {
@@ -1187,11 +1189,10 @@ function Draw-Sim {
             $g.FillEllipse($rb,($cx-28),($rootY-14),56,28); $rb.Dispose()
             $rp=New-Object System.Drawing.Pen($col,2)
             $g.DrawEllipse($rp,($cx-28),($rootY-14),56,28); $rp.Dispose()
-            $rf=New-Object System.Drawing.Font("Consolas",8,[System.Drawing.FontStyle]::Bold)
-            $rbr=New-Object System.Drawing.SolidBrush($col)
-            $rsz=$g.MeasureString($rootLbl,$rf)
-            $g.DrawString($rootLbl,$rf,$rbr,($cx-$rsz.Width/2),($rootY-$rsz.Height/2))
-            $rf.Dispose();$rbr.Dispose()
+            $rbr = New-Object System.Drawing.SolidBrush($col)
+            $rsz = $g.MeasureString($rootLbl,$script:fnt8B)
+            $g.DrawString($rootLbl,$script:fnt8B,$rbr,($cx-$rsz.Width/2),($rootY-$rsz.Height/2))
+            $rbr.Dispose()
 
             if ($prog -ge 0.01) {
                 $count=$children.Count
@@ -1204,12 +1205,11 @@ function Draw-Sim {
                     $g.FillEllipse($cb,($chx-28),($childY-14),56,28); $cb.Dispose()
                     $cp2=New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb($alpha,$MECH_COL.R,$MECH_COL.G,$MECH_COL.B),1)
                     $g.DrawEllipse($cp2,($chx-28),($childY-14),56,28); $cp2.Dispose()
-                    $cf=New-Object System.Drawing.Font("Consolas",7)
                     $cbr=New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($alpha,$MECH_COL.R,$MECH_COL.G,$MECH_COL.B))
-                    $clbl=if($children[$ci].Length-gt 8){$children[$ci].Substring(0,8)}else{$children[$ci]}
-                    $csz=$g.MeasureString($clbl,$cf)
-                    $g.DrawString($clbl,$cf,$cbr,($chx-$csz.Width/2),($childY-$csz.Height/2))
-                    $cf.Dispose();$cbr.Dispose()
+                    $clbl=if($children[$ci].Length -gt 8){$children[$ci].Substring(0,8)}else{$children[$ci]}
+                    $csz=$g.MeasureString($clbl,$script:fnt7)
+                    $g.DrawString($clbl,$script:fnt7,$cbr,($chx-$csz.Width/2),($childY-$csz.Height/2))
+                    $cbr.Dispose()
                 }
             }
         }
@@ -1305,25 +1305,23 @@ function Draw-Sim {
             $nv   = $lbls.Count
             $rad2 = [int]([Math]::Min($cw,$ch) * 0.30)
             $labR = $rad2 + 22
+            $rgp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(18,255,255,255),1)
             for ($ring2 = 1; $ring2 -le 3; $ring2++) {
                 $rr2 = [int]($rad2 * $ring2 / 3)
-                $rgp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(18,255,255,255),1)
-                $g.DrawEllipse($rgp,($cx-$rr2),($cy-$rr2),$rr2*2,$rr2*2); $rgp.Dispose()
-            }
+                $g.DrawEllipse($rgp,($cx-$rr2),($cy-$rr2),$rr2*2,$rr2*2)
+            }; $rgp.Dispose()
+            $aap = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(22,255,255,255),1)
+            $llb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(160,$col.R,$col.G,$col.B))
             for ($ai = 0; $ai -lt $nv; $ai++) {
                 $ang4 = 2*[Math]::PI*$ai/$nv - [Math]::PI/2
                 $aax  = [int]($cx + $rad2 * [Math]::Cos($ang4))
                 $aay  = [int]($cy + $rad2 * [Math]::Sin($ang4))
-                $aap  = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(22,255,255,255),1)
-                $g.DrawLine($aap,$cx,$cy,$aax,$aay); $aap.Dispose()
+                $g.DrawLine($aap,$cx,$cy,$aax,$aay)
                 $llx  = [int]($cx + $labR * [Math]::Cos($ang4))
                 $lly  = [int]($cy + $labR * [Math]::Sin($ang4))
-                $llf  = New-Object System.Drawing.Font('Consolas',7,[System.Drawing.FontStyle]::Bold)
-                $llb  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(160,$col.R,$col.G,$col.B))
-                $lsz  = $g.MeasureString($lbls[$ai],$llf)
-                $g.DrawString($lbls[$ai],$llf,$llb,($llx-$lsz.Width/2),($lly-$lsz.Height/2))
-                $llf.Dispose(); $llb.Dispose()
-            }
+                $lsz  = $g.MeasureString($lbls[$ai],$script:fnt7B)
+                $g.DrawString($lbls[$ai],$script:fnt7B,$llb,($llx-$lsz.Width/2),($lly-$lsz.Height/2))
+            }; $aap.Dispose(); $llb.Dispose()
             $pulse2 = 0.85 + [Math]::Sin($t * 0.5) * 0.15
             $polyList = [System.Collections.Generic.List[System.Drawing.Point]]::new()
             for ($vi = 0; $vi -lt $nv; $vi++) {
@@ -1340,10 +1338,9 @@ function Draw-Sim {
                 $ppp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(200,$col.R,$col.G,$col.B),2)
                 $g.FillPolygon($pfb,$polyArr); $g.DrawPolygon($ppp,$polyArr)
                 $pfb.Dispose(); $ppp.Dispose()
-                foreach ($pt2 in $polyArr) {
-                    $db2 = New-Object System.Drawing.SolidBrush($col)
-                    $g.FillEllipse($db2,($pt2.X-4),($pt2.Y-4),8,8); $db2.Dispose()
-                }
+                $db2 = New-Object System.Drawing.SolidBrush($col)
+                foreach ($pt2 in $polyArr) { $g.FillEllipse($db2,($pt2.X-4),($pt2.Y-4),8,8) }
+                $db2.Dispose()
             }
         }
 
@@ -1364,33 +1361,31 @@ function Draw-Sim {
                 )
             }
             $pulseT2 = ($t * 0.35) % 1.0
+            $npb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(190,$col.R,$col.G,$col.B))
             for ($ni = 1; $ni -lt $nn; $ni++) {
                 $src2 = $netPts[0]; $dst2 = $netPts[$ni]
                 $calpha = [int](25 + 18 * [Math]::Sin($t * 0.3 + $ni))
                 $ncp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb($calpha,$col.R,$col.G,$col.B),1)
                 $g.DrawLine($ncp,$src2.X,$src2.Y,$dst2.X,$dst2.Y); $ncp.Dispose()
-                $pp3 = ($pulseT2 + $ni * 0.18) % 1.0
+                $pp3  = ($pulseT2 + $ni * 0.18) % 1.0
                 $ppx2 = [int]($src2.X + ($dst2.X-$src2.X)*$pp3)
                 $ppy2 = [int]($src2.Y + ($dst2.Y-$src2.Y)*$pp3)
-                $npb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(190,$col.R,$col.G,$col.B))
-                $g.FillEllipse($npb,($ppx2-3),($ppy2-3),6,6); $npb.Dispose()
-            }
+                $g.FillEllipse($npb,($ppx2-3),($ppy2-3),6,6)
+            }; $npb.Dispose()
+            $nnp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(180,$col.R,$col.G,$col.B),1)
+            $nlb = New-Object System.Drawing.SolidBrush($col)
             for ($ni = 0; $ni -lt $nn; $ni++) {
                 $pos2  = $netPts[$ni]
                 $nnr   = if ($ni -eq 0) { 20 } else { 14 }
                 $nalph = [int](35 + 18 * [Math]::Sin($t * 0.4 + $ni))
                 $nnb   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($nalph,$col.R,$col.G,$col.B))
-                $nnp   = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(180,$col.R,$col.G,$col.B),1)
                 $g.FillEllipse($nnb,($pos2.X-$nnr),($pos2.Y-$nnr),$nnr*2,$nnr*2)
                 $g.DrawEllipse($nnp,($pos2.X-$nnr),($pos2.Y-$nnr),$nnr*2,$nnr*2)
-                $nnb.Dispose(); $nnp.Dispose()
-                $nlf = New-Object System.Drawing.Font('Consolas',7,[System.Drawing.FontStyle]::Bold)
-                $nlb = New-Object System.Drawing.SolidBrush($col)
+                $nnb.Dispose()
                 $nlbl2 = if ($lbls[$ni].Length -gt 6) { $lbls[$ni].Substring(0,6) } else { $lbls[$ni] }
-                $nsz = $g.MeasureString($nlbl2,$nlf)
-                $g.DrawString($nlbl2,$nlf,$nlb,($pos2.X-$nsz.Width/2),($pos2.Y-$nsz.Height/2))
-                $nlf.Dispose(); $nlb.Dispose()
-            }
+                $nsz   = $g.MeasureString($nlbl2,$script:fnt7B)
+                $g.DrawString($nlbl2,$script:fnt7B,$nlb,($pos2.X-$nsz.Width/2),($pos2.Y-$nsz.Height/2))
+            }; $nnp.Dispose(); $nlb.Dispose()
         }
 
         'grid_world' {
@@ -1403,16 +1398,15 @@ function Draw-Sim {
             $cellH2 = [int]($ch * 0.65 / $grows)
             $gw2    = $gcols * $cellW2; $gh2 = $grows * $cellH2
             $gsx    = [int]($cx - $gw2/2); $gsy = [int]($cy - $gh2/2)
+            $ggp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(18,255,255,255),1)
             for ($gr = 0; $gr -le $grows; $gr++) {
                 $gy3 = $gsy + $gr * $cellH2
-                $ggp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(18,255,255,255),1)
-                $g.DrawLine($ggp,$gsx,$gy3,($gsx+$gw2),$gy3); $ggp.Dispose()
+                $g.DrawLine($ggp,$gsx,$gy3,($gsx+$gw2),$gy3)
             }
             for ($gc = 0; $gc -le $gcols; $gc++) {
                 $gx3 = $gsx + $gc * $cellW2
-                $ggp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(18,255,255,255),1)
-                $g.DrawLine($ggp,$gx3,$gsy,$gx3,($gsy+$gh2)); $ggp.Dispose()
-            }
+                $g.DrawLine($ggp,$gx3,$gsy,$gx3,($gsy+$gh2))
+            }; $ggp.Dispose()
             $entCols = @($col,$AMBER,$MECH_COL,$GREEN,$SYS_COL,$LOOP_COL)
             for ($ei2 = 0; $ei2 -lt 6; $ei2++) {
                 $period2 = 2.5 + $ei2 * 0.6
@@ -1523,6 +1517,9 @@ $animTimer.Start()
 $form.Add_FormClosing({
     $animTimer.Stop(); $stateTimer.Stop()
     Save-SimIssues
+    $script:fnt7B.Dispose(); $script:fnt7.Dispose()
+    $script:fnt8B.Dispose(); $script:fnt8.Dispose()
+    $script:fnt11.Dispose()
     if (Test-Path $PID_F) { Remove-Item $PID_F -Force -ErrorAction SilentlyContinue }
 })
 
