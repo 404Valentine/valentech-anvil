@@ -322,19 +322,19 @@ $propTitleL.AutoSize  = $false
 $propTitleL.SetBounds(12, 10, 800, 22)
 $proposalPanel.Controls.Add($propTitleL)
 
-$checkPanel = New-Object System.Windows.Forms.Panel
-$checkPanel.BackColor  = $CARD_BG
-$checkPanel.AutoScroll = $false
-$checkPanel.SetBounds(12, 36, 800, 80)
-$proposalPanel.Controls.Add($checkPanel)
-
 $propDescL = New-Object System.Windows.Forms.Label
 $propDescL.Text      = 'Select a system node to begin.'
 $propDescL.Font      = New-Object System.Drawing.Font('Consolas', 9)
 $propDescL.ForeColor = $TEXT_MID
 $propDescL.AutoSize  = $false
-$propDescL.SetBounds(12, 122, 800, 60)
+$propDescL.SetBounds(12, 36, 800, 70)
 $proposalPanel.Controls.Add($propDescL)
+
+$checkPanel = New-Object System.Windows.Forms.Panel
+$checkPanel.BackColor  = $CARD_BG
+$checkPanel.AutoScroll = $true
+$checkPanel.SetBounds(12, 114, 800, 120)
+$proposalPanel.Controls.Add($checkPanel)
 
 # Keep a stub descBox reference so existing code that sets .Text still works
 $descBox = $propDescL
@@ -355,9 +355,11 @@ function Relayout {
     $canvas.SetBounds($RIGHT_X, $GAP, $RIGHT_W, $CANVAS_H)
     $proposalPanel.SetBounds($RIGHT_X, ($CANVAS_H + $GAP * 2), $RIGHT_W, $DESC_H)
     $propTitleL.Width  = $RIGHT_W - 24
-    $checkPanel.Width  = $RIGHT_W - 24
     $propDescL.Width   = $RIGHT_W - 24
-    $propDescL.Height  = 80
+    $propDescL.Height  = 70
+    $checkPanel.Width  = $RIGHT_W - 24
+    $checkPanel.Top    = 114
+    $checkPanel.Height = [Math]::Max(60, $DESC_H - 122)
 }
 
 $body.Add_Resize({ Relayout })
@@ -1477,13 +1479,9 @@ $stateTimer.Add_Tick({
                 $script:checkboxes.Add($cb)
                 $cy += 28
             }
-            $checkPanel.Height = [Math]::Max(28, $cy)
-            $propDescL.Top = $checkPanel.Top + $checkPanel.Height + 8
-            $propDescL.Height = 80
+            # checkPanel height is fixed by Relayout; AutoScroll handles overflow
         } else {
-            $checkPanel.Height = 0
-            $propDescL.Top     = $checkPanel.Top
-            $propDescL.Height  = 80
+            # No components — nothing to do, layout unchanged
         }
         Set-Buttons-Waiting
     }
