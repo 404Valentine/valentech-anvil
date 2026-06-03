@@ -351,7 +351,7 @@ $checkOuter.Controls.Add($checkPanel)
 
 # "More" indicator — shown when checklist overflows
 $moreLabel = New-Object System.Windows.Forms.Label
-$moreLabel.Text      = '▼  scroll for more'
+$moreLabel.Text      = 'v  scroll for more'
 $moreLabel.Font      = New-Object System.Drawing.Font('Consolas', 8)
 $moreLabel.ForeColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
 $moreLabel.AutoSize  = $false
