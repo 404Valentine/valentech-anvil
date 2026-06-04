@@ -7,7 +7,7 @@ $allowed = [System.IO.Path]::GetFullPath([Environment]::GetFolderPath('MyDocumen
 
 # SEC-02: Validate output path is within the allowed directory
 $resolved = try { [System.IO.Path]::GetFullPath($OutputPath) } catch { "" }
-if (-not $resolved -or -not $resolved.StartsWith($allowed)) {
+if (-not $resolved -or -not $resolved.StartsWith($allowed + '\')) {
     Write-Output "denied"; return
 }
 

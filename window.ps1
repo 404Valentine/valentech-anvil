@@ -729,6 +729,7 @@ function Open-SavesPanel {
         $propTitleL.Text = ''; $propDescL.Text = ''
         $checkPanel.Controls.Clear(); $script:checkboxes.Clear()
         $script:currentTitle = ''; $script:currentContent = ''
+        $script:nodeSelectedAt = [datetime]::MinValue
         Set-Buttons-Idle
         Write-StateFields @{ title = ''; content = ''; response = '' }
         $descBox.Text = "Loaded: $($data.projectName)`n`nSelect a concept node to continue."
@@ -749,6 +750,7 @@ function Parse-GDD([string]$raw) {
     $propTitleL.Text = ''; $propDescL.Text = ''
     $checkPanel.Controls.Clear(); $script:checkboxes.Clear()
     $script:currentTitle = ''; $script:currentContent = ''
+    $script:nodeSelectedAt = [datetime]::MinValue
     Start-SimType 'waiting_pulse' @{}; Set-Buttons-Idle
 
     Write-StateFields @{ gdd_raw = $raw; title = ''; content = ''; response = '' }
