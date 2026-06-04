@@ -14,12 +14,23 @@ if (-not $resolved -or -not $resolved.StartsWith($allowed)) {
 [System.IO.File]::WriteAllText($resolved, $Content, [System.Text.Encoding]::UTF8)
 
 # Signal the window via JSON object update
+function Write-Atomic([string]$path, [string]$content) {
+    $tmp = "$path.tmp"
+    for ($i = 0; $i -lt 3; $i++) {
+        try {
+            Set-Content $tmp $content -NoNewline -Encoding UTF8
+            Move-Item $tmp $path -Force
+            return
+        } catch { Start-Sleep -Milliseconds 50 }
+    }
+}
+
 $raw = Get-Content $STATE -Raw -ErrorAction SilentlyContinue
 if ($raw -and $raw.Trim() -ne '') {
     try {
         $obj = $raw | ConvertFrom-Json
         $obj.framework_path = $resolved
-        Set-Content $STATE ($obj | ConvertTo-Json -Compress -Depth 6) -NoNewline -Encoding UTF8
+        Write-Atomic $STATE ($obj | ConvertTo-Json -Compress -Depth 6)
     } catch {}
 }
 

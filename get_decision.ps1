@@ -1,9 +1,6 @@
 param([string]$RequestTs)
 $STATE   = Join-Path $PSScriptRoot "state.json"
 $PID_F   = Join-Path $PSScriptRoot "window.pid"
-$timeout = 120  # seconds
-
-$sw        = [System.Diagnostics.Stopwatch]::StartNew()
 $lastWrite = [datetime]::MinValue
 
 while ($true) {
@@ -11,9 +8,6 @@ while ($true) {
 
     # Exit if window closed
     if (-not (Test-Path $PID_F)) { Write-Output "deny"; return }
-
-    # Exit if timed out
-    if ($sw.Elapsed.TotalSeconds -ge $timeout) { Write-Output "deny"; return }
 
     # Skip read if state.json hasn't changed
     $fi = Get-Item $STATE -ErrorAction SilentlyContinue

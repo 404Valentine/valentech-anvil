@@ -316,6 +316,7 @@ $canvas.BackColor = $BG
 $canvas.SizeMode  = 'Normal'
 $body.Controls.Add($canvas)
 
+
 # Proposal panel replaces plain descBox — shows title, checkboxes, description
 $proposalPanel = New-Object System.Windows.Forms.Panel
 $proposalPanel.BackColor  = $CARD_BG
@@ -414,11 +415,21 @@ function Read-State {
     try { return $raw | ConvertFrom-Json } catch { return $null }
 }
 
+function Write-Atomic([string]$path, [string]$content) {
+    $tmp = "$path.tmp"
+    for ($i = 0; $i -lt 3; $i++) {
+        try {
+            Set-Content $tmp $content -NoNewline -Encoding UTF8
+            Move-Item $tmp $path -Force
+            return
+        } catch { Start-Sleep -Milliseconds 50 }
+    }
+}
+
 function Write-StateFields([hashtable]$fields) {
-    # Atomic field update: parse → patch → re-serialise. Eliminates all manual regex-replace.
     $obj = Read-State; if (-not $obj) { return }
     foreach ($k in $fields.Keys) { $obj.$k = $fields[$k] }
-    try { Set-Content $STATE ($obj | ConvertTo-Json -Compress -Depth 6) -NoNewline -Encoding UTF8 } catch {}
+    Write-Atomic $STATE ($obj | ConvertTo-Json -Compress -Depth 6)
 }
 
 function Write-Response([string]$val) {
@@ -468,7 +479,15 @@ $btnConfirm.Add_Click({
         Save-Features; Rebuild-NodeList; Update-FrameworkButton
     }
 })
-$btnReroll.Add_Click({ Write-Response "reroll"; Set-Buttons-Idle })
+$btnReroll.Add_Click({
+    Write-Response "reroll"
+    $propTitleL.Text = "Generating..."
+    $propDescL.Text  = ""
+    $checkPanel.Controls.Clear()
+    $script:checkboxes.Clear()
+    Start-SimType 'waiting_pulse' @{}
+    Set-Buttons-Idle
+})
 $btnEnd.Add_Click({ Write-Response "deny"; Set-Buttons-Idle; $form.Close() })
 $btnSimReport.Add_Click({
     $script:simIssues.Add("sim=$($script:simType) node=$($script:currentNode) title=$($script:currentTitle)")
@@ -493,13 +512,16 @@ $btnFramework.Add_Click({
 function Read-GDDFile([string]$path) {
     $ext = [System.IO.Path]::GetExtension($path).ToLower()
     if ($ext -eq '.pdf') {
-        $pdftotext = "C:\Program Files\Git\mingw64\bin\pdftotext.exe"
-        if (-not (Test-Path $pdftotext)) { throw "pdftotext not found. Save the GDD as .txt first." }
+        $cmd = Get-Command pdftotext -ErrorAction SilentlyContinue
+        $pdftotext = if ($cmd) { $cmd.Source } else { "C:\Program Files\Git\mingw64\bin\pdftotext.exe" }
+        if (-not (Test-Path $pdftotext)) { throw "pdftotext not found. Install Poppler or save the GDD as .txt first." }
         $tmp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.Guid]::NewGuid().ToString('N') + '.txt')
         try {
-            & $pdftotext -layout $path $tmp 2>$null
+            & $pdftotext $path $tmp 2>$null
             if (-not (Test-Path $tmp)) { throw "PDF extraction failed." }
-            return [System.IO.File]::ReadAllText($tmp)
+            $extracted = [System.IO.File]::ReadAllText($tmp)
+            if ($extracted.Trim().Length -lt 200) { throw "PDF appears to be image-based or empty. Save as .txt first." }
+            return $extracted
         } finally {
             if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
         }
@@ -737,7 +759,7 @@ function Parse-GDD([string]$raw) {
         elseif ($l -match '^#{1,3}\s+(.+)$')       { $candidate = $matches[1].Trim() }
         if (-not $candidate) { continue }
 
-        if ($candidate -match '[^\x00-\x7F]') { continue }
+        if ($candidate -match '[\x00-\x08\x0B\x0C\x0E-\x1F]') { continue }
         if ($candidate -match '^\d+$') { continue }
         if ($candidate.Length -lt 3 -or $candidate.Length -gt 50) { continue }
 
@@ -771,7 +793,7 @@ function Parse-GDD([string]$raw) {
         $end    = if ($hi + 1 -lt $headings.Count) { $headings[$hi+1].idx } else { [Math]::Min($lines.Count, $start + 40) }
         $parts  = for ($bi = $start; $bi -lt $end; $bi++) {
             $bl = $lines[$bi].Trim()
-            if ($bl.Length -gt 5 -and $bl -notmatch '^[#\d]' -and $bl -notmatch '[^\x00-\x7F]') { $bl }
+            if ($bl.Length -gt 5 -and $bl -notmatch '^[#\d]' -and $bl -notmatch '[\x00-\x08\x0B\x0C\x0E-\x1F]') { $bl }
         }
         $excerpt = (($parts -join ' ') -replace '\s+', ' ').Trim()
         if ($excerpt.Length -gt 600) { $excerpt = $excerpt.Substring(0, 600) }
@@ -1417,6 +1439,285 @@ function Draw-Sim {
                 $g.DrawRectangle($eep,$eex,$eey,$eew,$eeh)
                 $eeb.Dispose(); $eep.Dispose()
             }
+        }
+
+        'creature_chase' {
+            # Combat — all GDI objects created once, reused, disposed at end
+            $p    = $script:simParams
+            $col  = if ($p.color)  { try { [System.Drawing.ColorTranslator]::FromHtml($p.color)  } catch { $RED_COL  } } else { $RED_COL  }
+            $col2 = if ($p.color2) { try { [System.Drawing.ColorTranslator]::FromHtml($p.color2) } catch { $MECH_COL } } else { $MECH_COL }
+            $crX  = [int]($cx + [Math]::Sin($t*0.5)*$cw*0.28);   $crY = [int]($cy - $ch*0.12)
+            $huX  = [int]($cx + [Math]::Sin($t*0.5-1.1)*$cw*0.28); $huY = [int]($cy + $ch*0.14)
+            $dx   = $crX-$huX; $dy = $crY-$huY
+            $ang  = [Math]::Atan2($dy,$dx); $cLen=80; $cHalf=[Math]::PI/6.5
+            $penRed = New-Object System.Drawing.Pen($col,2)
+            $brRed  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(40,$col.R,$col.G,$col.B))
+            $penCyn = New-Object System.Drawing.Pen($col2,2)
+            $brCyn  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(25,$col2.R,$col2.G,$col2.B))
+            $brTxt  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(160,$col.R,$col.G,$col.B))
+            # Single pulsing noise ring (reuse $penRed)
+            $rr = [int]((($t*1.1)%1.0)*55)+5
+            $g.DrawEllipse($penRed,($crX-$rr),($crY-$rr),$rr*2,$rr*2)
+            # Stealth cone (reuse $brCyn/$penCyn)
+            $cpt1=[System.Drawing.Point]::new($huX,$huY)
+            $cpt2=[System.Drawing.Point]::new([int]($huX+$cLen*[Math]::Cos($ang+$cHalf)),[int]($huY+$cLen*[Math]::Sin($ang+$cHalf)))
+            $cpt3=[System.Drawing.Point]::new([int]($huX+$cLen*[Math]::Cos($ang-$cHalf)),[int]($huY+$cLen*[Math]::Sin($ang-$cHalf)))
+            $g.FillPolygon($brCyn,@($cpt1,$cpt2,$cpt3))
+            $g.DrawLine($penCyn,$cpt1,$cpt2); $g.DrawLine($penCyn,$cpt1,$cpt3)
+            # Creature diamond (reuse $brRed/$penRed)
+            $dm=@([System.Drawing.Point]::new($crX,$crY-14),[System.Drawing.Point]::new($crX+10,$crY),[System.Drawing.Point]::new($crX,$crY+14),[System.Drawing.Point]::new($crX-10,$crY))
+            $g.FillPolygon($brRed,$dm); $g.DrawPolygon($penRed,$dm)
+            # Hunter circle (reuse $brCyn/$penCyn)
+            $g.FillEllipse($brCyn,($huX-11),($huY-11),22,22); $g.DrawEllipse($penCyn,($huX-11),($huY-11),22,22)
+            # Labels (reuse $brTxt)
+            $tgt=[string](if($p.target){$p.target}else{"PREY"}); $hnt=[string](if($p.hunter){$p.hunter}else{"HUNTER"})
+            $s1=$g.MeasureString($tgt,$script:fnt7B); $g.DrawString($tgt,$script:fnt7B,$brTxt,($crX-$s1.Width/2),($crY+18))
+            $s2=$g.MeasureString($hnt,$script:fnt7B); $g.DrawString($hnt,$script:fnt7B,$brTxt,($huX-$s2.Width/2),($huY-28))
+            $penRed.Dispose();$brRed.Dispose();$penCyn.Dispose();$brCyn.Dispose();$brTxt.Dispose()
+        }
+
+        'gene_pool' {
+            # Genetics — all GDI objects created once, reused, disposed at end
+            $p     = $script:simParams
+            $col1  = if ($p.color1){try{[System.Drawing.ColorTranslator]::FromHtml($p.color1)}catch{$MECH_COL}}else{$MECH_COL}
+            $col2  = if ($p.color2){try{[System.Drawing.ColorTranslator]::FromHtml($p.color2)}catch{$SYS_COL}}else{$SYS_COL}
+            $pAL   = [string](if($p.parentA){$p.parentA}else{"PARENT A"})
+            $pBL   = [string](if($p.parentB){$p.parentB}else{"PARENT B"})
+            $offL  = [string](if($p.offspring){$p.offspring}else{"OFFSPRING"})
+            $aX=[int]($cx-$cw*0.22); $aY=[int]($cy-$ch*0.18)
+            $bX=[int]($cx+$cw*0.22); $bY=$aY; $oX=$cx; $oY=[int]($cy+$ch*0.18)
+            $pp   = ($t*0.55)%1.0; $fromA=([int]($t*0.55)%2 -eq 0)
+            $pc   = if($fromA){$col1}else{$col2}; $fx=if($fromA){$aX}else{$bX}
+            $tpx  = [int]($fx+($oX-$fx)*$pp); $tpy=[int]($aY+($oY-$aY)*$pp)
+            $penA  = New-Object System.Drawing.Pen($col1,2)
+            $brA   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(30,$col1.R,$col1.G,$col1.B))
+            $penB  = New-Object System.Drawing.Pen($col2,2)
+            $brB   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(30,$col2.R,$col2.G,$col2.B))
+            $penFt = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(18,200,200,200),1)
+            $penOf = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(180,220,220,220),2)
+            $brOf  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(22,200,200,200))
+            $brPt  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(210,$pc.R,$pc.G,$pc.B))
+            $brLA  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(160,$col1.R,$col1.G,$col1.B))
+            $brLB  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(160,$col2.R,$col2.G,$col2.B))
+            $brLO  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,200,200,200))
+            $g.DrawLine($penFt,$aX,$aY,$oX,$oY); $g.DrawLine($penFt,$bX,$bY,$oX,$oY)
+            $g.FillEllipse($brPt,($tpx-6),($tpy-6),12,12)
+            $g.FillEllipse($brA,($aX-22),($aY-22),44,44); $g.DrawEllipse($penA,($aX-22),($aY-22),44,44)
+            $g.FillEllipse($brB,($bX-22),($bY-22),44,44); $g.DrawEllipse($penB,($bX-22),($bY-22),44,44)
+            $g.FillEllipse($brOf,($oX-18),($oY-18),36,36); $g.DrawEllipse($penOf,($oX-18),($oY-18),36,36)
+            $sA=$g.MeasureString($pAL,$script:fnt7B); $g.DrawString($pAL,$script:fnt7B,$brLA,($aX-$sA.Width/2),($aY+26))
+            $sB=$g.MeasureString($pBL,$script:fnt7B); $g.DrawString($pBL,$script:fnt7B,$brLB,($bX-$sB.Width/2),($bY+26))
+            $sO=$g.MeasureString($offL,$script:fnt7B); $g.DrawString($offL,$script:fnt7B,$brLO,($oX-$sO.Width/2),($oY+22))
+            $penA.Dispose();$brA.Dispose();$penB.Dispose();$brB.Dispose()
+            $penFt.Dispose();$penOf.Dispose();$brOf.Dispose();$brPt.Dispose()
+            $brLA.Dispose();$brLB.Dispose();$brLO.Dispose()
+        }
+
+        'bond_grow' {
+            # Social — all GDI objects created once, reused, disposed at end
+            $p   = $script:simParams
+            $col = if($p.color){try{[System.Drawing.ColorTranslator]::FromHtml($p.color)}catch{$SYS_COL}}else{$SYS_COL}
+            $pL  = [string](if($p.player){$p.player}else{"PLAYER"})
+            $cL  = [string](if($p.creature){$p.creature}else{"CREATURE"})
+            $plX=[int]($cx-$cw*0.28); $plY=$cy; $crX3=[int]($cx+$cw*0.28); $crY3=$cy
+            $tr  = ($t%4.5)/4.5
+            $bpX = [int]($plX+($crX3-$plX)*(($t*0.8)%1.0))
+            $barW=[int]($cw*0.45); $barX=[int]($cx-$barW/2); $barY=[int]($cy+$ch*0.15)
+            $penCo = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb([int](30+$tr*140),$col.R,$col.G,$col.B),[float](1.0+$tr*3.5))
+            $penCy = New-Object System.Drawing.Pen($MECH_COL,2)
+            $brCy  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(35,$MECH_COL.R,$MECH_COL.G,$MECH_COL.B))
+            $penCl = New-Object System.Drawing.Pen($col,2)
+            $brCl  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(35,$col.R,$col.G,$col.B))
+            $brBar = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,$col.R,$col.G,$col.B))
+            $brBg  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(30,255,255,255))
+            $brTxt = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(140,$col.R,$col.G,$col.B))
+            $brCyT = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(160,$MECH_COL.R,$MECH_COL.G,$MECH_COL.B))
+            $g.DrawLine($penCo,$plX,$plY,$crX3,$crY3)
+            $g.FillEllipse($brCl,($bpX-4),($plY-4),8,8)
+            $g.FillEllipse($brCy,($plX-14),($plY-14),28,28);  $g.DrawEllipse($penCy,($plX-14),($plY-14),28,28)
+            $g.FillEllipse($brCl,($crX3-14),($crY3-14),28,28); $g.DrawEllipse($penCl,($crX3-14),($crY3-14),28,28)
+            $g.FillRectangle($brBg,$barX,$barY,$barW,8)
+            $fw=[int]($barW*$tr); if($fw-gt 0){$g.FillRectangle($brBar,$barX,$barY,$fw,8)}
+            $tl="TRUST  "+[int]($tr*100)+"%"; $ts=$g.MeasureString($tl,$script:fnt7B)
+            $g.DrawString($tl,$script:fnt7B,$brTxt,($cx-$ts.Width/2),($barY+12))
+            $s1=$g.MeasureString($pL,$script:fnt7B); $g.DrawString($pL,$script:fnt7B,$brCyT,($plX-$s1.Width/2),($plY-30))
+            $s2=$g.MeasureString($cL,$script:fnt7B); $g.DrawString($cL,$script:fnt7B,$brTxt,($crX3-$s2.Width/2),($crY3-30))
+            $penCo.Dispose();$penCy.Dispose();$brCy.Dispose();$penCl.Dispose();$brCl.Dispose()
+            $brBar.Dispose();$brBg.Dispose();$brTxt.Dispose();$brCyT.Dispose()
+        }
+
+        'market_flow' {
+            # Economy — all GDI objects created once, reused, disposed at end
+            $p    = $script:simParams
+            $col  = if($p.color){try{[System.Drawing.ColorTranslator]::FromHtml($p.color)}catch{$AMBER}}else{$AMBER}
+            $item = [string](if($p.item){$p.item}else{"ITEM"})
+            $prce = [string](if($p.price){$p.price}else{"50G"})
+            $pL   = [string](if($p.player){$p.player}else{"PLAYER"})
+            $mL   = [string](if($p.merchant){$p.merchant}else{"MERCHANT"})
+            $plX4=[int]($cx-$cw*0.30); $plY4=$cy; $mrX4=[int]($cx+$cw*0.30); $mrY4=$cy
+            $iPh=($t*0.55)%1.0; $gPh=($t*0.55+0.5)%1.0
+            $ipx=[int]($mrX4+($plX4-$mrX4)*$iPh); $ipy=[int]($mrY4+[Math]::Sin($iPh*[Math]::PI)*(-32))
+            $gpx=[int]($plX4+($mrX4-$plX4)*$gPh); $gpy=[int]($plY4+[Math]::Sin($gPh*[Math]::PI)*(-26))
+            $penAm = New-Object System.Drawing.Pen($col,1)
+            $brAmD = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(20,$col.R,$col.G,$col.B))
+            $brAm  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,$col.R,$col.G,$col.B))
+            $penCy = New-Object System.Drawing.Pen($MECH_COL,2)
+            $brCy  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(35,$MECH_COL.R,$MECH_COL.G,$MECH_COL.B))
+            $brItm = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,$MECH_COL.R,$MECH_COL.G,$MECH_COL.B))
+            $brCyT = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(140,$MECH_COL.R,$MECH_COL.G,$MECH_COL.B))
+            $g.FillRectangle($brAmD,($mrX4-25),($mrY4-20),50,40); $g.DrawRectangle($penAm,($mrX4-25),($mrY4-20),50,40)
+            $g.DrawLine($penAm,($mrX4-30),($mrY4-20),($mrX4+30),($mrY4-20))
+            $g.FillRectangle($brItm,($ipx-5),($ipy-5),10,10)
+            $g.DrawString($item,$script:fnt7,$brItm,($ipx-10),($ipy-17))
+            $g.FillEllipse($brAm,($gpx-5),($gpy-5),10,10)
+            if($gPh-gt 0.2-and $gPh-lt 0.8){$g.DrawString($prce,$script:fnt7,$brAm,($gpx-10),($gpy-16))}
+            $g.FillEllipse($brCy,($plX4-14),($plY4-14),28,28); $g.DrawEllipse($penCy,($plX4-14),($plY4-14),28,28)
+            $s1=$g.MeasureString($pL,$script:fnt7B); $g.DrawString($pL,$script:fnt7B,$brCyT,($plX4-$s1.Width/2),($plY4+18))
+            $s2=$g.MeasureString($mL,$script:fnt7B); $g.DrawString($mL,$script:fnt7B,$brAm,($mrX4-$s2.Width/2),($mrY4+26))
+            $penAm.Dispose();$brAmD.Dispose();$brAm.Dispose();$penCy.Dispose();$brCy.Dispose();$brItm.Dispose();$brCyT.Dispose()
+        }
+
+        'world_discover' {
+            # Exploration — shared GDI objects created once outside loop
+            $p     = $script:simParams
+            $col   = if($p.color){try{[System.Drawing.ColorTranslator]::FromHtml($p.color)}catch{$MECH_COL}}else{$MECH_COL}
+            $gcols = if($p.cols){[int]$p.cols}else{5}; $grows=if($p.rows){[int]$p.rows}else{4}
+            $numC  = $gcols*$grows
+            $cellW = [int]($cw*0.68/$gcols); $cellH=[int]($ch*0.62/$grows)
+            $gW    = $gcols*$cellW; $gH=$grows*$cellH
+            $gsx   = [int]($cx-$gW/2); $gsy=[int]($cy-$gH/2)
+            $rev   = [Math]::Min($numC,($t*0.28)%($numC+2))
+            $penGr = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(22,255,255,255),1)
+            $brFog = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(18,255,255,255))
+            $brRev = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(38,$col.R,$col.G,$col.B))
+            $brDot = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(160,$col.R,$col.G,$col.B))
+            $brTxt = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(120,$col.R,$col.G,$col.B))
+            for ($ci = 0; $ci -lt $numC; $ci++) {
+                $gr=[int]($ci/$gcols); $gc=$ci%$gcols
+                $cx2=$gsx+$gc*$cellW; $cy2=$gsy+$gr*$cellH
+                if ($ci -lt [int]$rev) {
+                    $g.FillRectangle($brRev,($cx2+1),($cy2+1),($cellW-2),($cellH-2))
+                    $g.FillEllipse($brDot,($cx2+[int]($cellW*0.5)-4),($cy2+[int]($cellH*0.5)-4),8,8)
+                } else {
+                    $g.FillRectangle($brFog,($cx2+1),($cy2+1),($cellW-2),($cellH-2))
+                }
+                $g.DrawRectangle($penGr,$cx2,$cy2,$cellW,$cellH)
+            }
+            $eLbl=[string](if($p.label){$p.label}else{"EXPLORE"})
+            $esz=$g.MeasureString($eLbl,$script:fnt8B); $g.DrawString($eLbl,$script:fnt8B,$brTxt,($cx-$esz.Width/2),($gsy+$gH+8))
+            $penGr.Dispose();$brFog.Dispose();$brRev.Dispose();$brDot.Dispose();$brTxt.Dispose()
+        }
+
+        'ranch_build' {
+            # Building — shared GDI objects created once outside loops
+            $p     = $script:simParams
+            $col   = if($p.color){try{[System.Drawing.ColorTranslator]::FromHtml($p.color)}catch{$MECH_COL}}else{$MECH_COL}
+            $nEnc  = if($p.enclosures){[int]$p.enclosures}else{3}
+            $labels= if($p.labels){$p.labels}else{@()}
+            $encW  = [int]($cw*0.18); $encH=[int]($ch*0.26)
+            $gap   = [int]($cw*0.06)
+            $stX   = [int]($cx-($nEnc*$encW+($nEnc-1)*$gap)/2); $encY=[int]($cy-$encH/2-16)
+            $penE  = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(140,$col.R,$col.G,$col.B),1)
+            $brE   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(18,$col.R,$col.G,$col.B))
+            $brDot = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,$col.R,$col.G,$col.B))
+            $brBar = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(180,$col.R,$col.G,$col.B))
+            $brBg  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(25,255,255,255))
+            $brTxt = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(140,$col.R,$col.G,$col.B))
+            for ($ei = 0; $ei -lt $nEnc; $ei++) {
+                $ex = $stX+$ei*($encW+$gap)
+                $g.FillRectangle($brE,$ex,$encY,$encW,$encH); $g.DrawRectangle($penE,$ex,$encY,$encW,$encH)
+                $nD = [int]((($t*0.25+$ei*0.55)%1.0)*9)+1
+                for ($di = 0; $di -lt [Math]::Min($nD,9); $di++) {
+                    $dcx=$ex+10+($di%3)*[int](($encW-20)/3)
+                    $dcy=$encY+12+[int]($di/3)*[int](($encH-24)/3)
+                    $g.FillEllipse($brDot,($dcx-4),($dcy-4),9,9)
+                }
+                $upY=[int]($encY+$encH+6); $upF=[int]($encW*(($t*0.18+$ei*0.88)%1.0))
+                $g.FillRectangle($brBg,$ex,$upY,$encW,7)
+                if($upF-gt 0){$g.FillRectangle($brBar,$ex,$upY,$upF,7)}
+                $lbl=[string](if($ei-lt $labels.Count){$labels[$ei]}else{"PEN "+[string][char](65+$ei)})
+                $lsz=$g.MeasureString($lbl,$script:fnt7B); $g.DrawString($lbl,$script:fnt7B,$brTxt,($ex+$encW/2-$lsz.Width/2),($upY+10))
+            }
+            $penE.Dispose();$brE.Dispose();$brDot.Dispose();$brBar.Dispose();$brBg.Dispose();$brTxt.Dispose()
+        }
+
+        'garden_cycle' {
+            # Plants — shared GDI objects created once outside plant loop
+            $p     = $script:simParams
+            $col   = if($p.color){try{[System.Drawing.ColorTranslator]::FromHtml($p.color)}catch{$GREEN}}else{$GREEN}
+            $nP    = if($p.count){[int]$p.count}else{5}
+            $per   = if($p.period){[double]$p.period}else{3.8}
+            $labels= if($p.labels){$p.labels}else{@()}
+            $gY    = [int]($cy+$ch*0.12)
+            $totW  = [int]($cw*0.72); $spc=[int]($totW/[Math]::Max($nP,2))
+            $stX   = [int]($cx-$totW/2+$spc/2)
+            $penSt = New-Object System.Drawing.Pen($col,2)
+            $brLf  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(160,$col.R,$col.G,$col.B))
+            $brFl  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(230,$META_COL.R,$META_COL.G,$META_COL.B))
+            $brTxt = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(100,$col.R,$col.G,$col.B))
+            $penGl = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(30,255,255,255),1)
+            $g.DrawLine($penGl,($cx-$totW/2),$gY,($cx+$totW/2),$gY)
+            for ($pi = 0; $pi -lt $nP; $pi++) {
+                $px = $stX+$pi*$spc
+                $ph = (($t/$per+$pi*0.22)%1.0)
+                if ($ph -lt 0.25) {
+                    $stH=[int](($ph/0.25)*18)
+                    $g.DrawLine($penSt,$px,$gY,$px,($gY-$stH))
+                    if($stH-gt 3){$g.FillEllipse($brLf,($px-4),($gY-$stH-4),8,8)}
+                } elseif ($ph -lt 0.60) {
+                    $stH=[int](18+(($ph-0.25)/0.35)*22); $lfW=[int]((($ph-0.25)/0.35)*12)
+                    $g.DrawLine($penSt,$px,$gY,$px,($gY-$stH))
+                    if($lfW-gt 2){$g.FillEllipse($brLf,($px-$lfW-4),($gY-$stH/2-5),$lfW,8);$g.FillEllipse($brLf,($px+4),($gY-$stH/2-5),$lfW,8)}
+                    $g.FillEllipse($brLf,($px-5),($gY-$stH-5),10,10)
+                } elseif ($ph -lt 0.84) {
+                    $g.DrawLine($penSt,$px,$gY,$px,($gY-40))
+                    $g.FillEllipse($brLf,($px-18),($gY-26),$14,10);$g.FillEllipse($brLf,($px+4),($gY-26),14,10)
+                    $g.FillEllipse($brFl,($px-7),($gY-47),14,14)
+                } else {
+                    $g.DrawLine($penSt,$px,$gY,$px,($gY-44))
+                    $g.FillEllipse($brFl,($px-9),($gY-53),18,18)
+                }
+                if($pi-lt $labels.Count){$sz=$g.MeasureString([string]$labels[$pi],$script:fnt7);$g.DrawString([string]$labels[$pi],$script:fnt7,$brTxt,($px-$sz.Width/2),($gY+6))}
+            }
+            $penSt.Dispose();$brLf.Dispose();$brFl.Dispose();$brTxt.Dispose();$penGl.Dispose()
+        }
+
+        'season_turn' {
+            # Seasons — two shared pen/brush sets (active vs dim) created before loop
+            $p      = $script:simParams
+            $labels = if($p.labels){$p.labels}else{@("SPRING","SUMMER","AUTUMN","WINTER")}
+            $sCol   = @($GREEN,$META_COL,$AMBER,$MECH_COL)
+            $seaPh  = ($t*0.12)%4.0; $act=[int]$seaPh
+            $pad    = 6; $qW=[int](($cw-$pad*3)/2); $qH=[int](($ch-$pad*3)/2)
+            $actC   = $sCol[$act]
+            $penDim = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(40,255,255,255),1)
+            $brDim  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(10,255,255,255))
+            $brTDim = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(60,255,255,255))
+            $penAct = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(210,$actC.R,$actC.G,$actC.B),2)
+            $brAct  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb([int](38+18*[Math]::Sin($t*1.5)),$actC.R,$actC.G,$actC.B))
+            $brTAct = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(220,$actC.R,$actC.G,$actC.B))
+            $brDot  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(220,$actC.R,$actC.G,$actC.B))
+            for ($si = 0; $si -lt 4; $si++) {
+                if($si-eq 0){$qx=$pad;$qy=$pad}
+                elseif($si-eq 1){$qx=$pad*2+$qW;$qy=$pad}
+                elseif($si-eq 2){$qx=$pad*2+$qW;$qy=$pad*2+$qH}
+                else{$qx=$pad;$qy=$pad*2+$qH}
+                $isA=($si-eq $act)
+                if($isA){$g.FillRectangle($brAct,$qx,$qy,$qW,$qH);$g.DrawRectangle($penAct,$qx,$qy,$qW,$qH)}
+                else    {$g.FillRectangle($brDim,$qx,$qy,$qW,$qH);$g.DrawRectangle($penDim,$qx,$qy,$qW,$qH)}
+                $lbl=[string](if($si-lt $labels.Count){$labels[$si]}else{""})
+                $sz=$g.MeasureString($lbl,$script:fnt8B)
+                if($isA){$g.DrawString($lbl,$script:fnt8B,$brTAct,($qx+$qW/2-$sz.Width/2),($qy+$qH/2-$sz.Height/2))}
+                else    {$g.DrawString($lbl,$script:fnt8B,$brTDim,($qx+$qW/2-$sz.Width/2),($qy+$qH/2-$sz.Height/2))}
+            }
+            # Migration dot from active to next (clockwise)
+            $nxt=($act+1)%4
+            if($act-eq 0){$fx=$pad+$qW/2;$fy=$pad+$qH/2}elseif($act-eq 1){$fx=$pad*2+$qW+$qW/2;$fy=$pad+$qH/2}elseif($act-eq 2){$fx=$pad*2+$qW+$qW/2;$fy=$pad*2+$qH+$qH/2}else{$fx=$pad+$qW/2;$fy=$pad*2+$qH+$qH/2}
+            if($nxt-eq 0){$tx=$pad+$qW/2;$ty=$pad+$qH/2}elseif($nxt-eq 1){$tx=$pad*2+$qW+$qW/2;$ty=$pad+$qH/2}elseif($nxt-eq 2){$tx=$pad*2+$qW+$qW/2;$ty=$pad*2+$qH+$qH/2}else{$tx=$pad+$qW/2;$ty=$pad*2+$qH+$qH/2}
+            $ph=($t*0.5)%1.0; $mpx=[int]($fx+($tx-$fx)*$ph); $mpy=[int]($fy+($ty-$fy)*$ph)
+            $g.DrawLine($penAct,[int]$fx,[int]$fy,[int]$tx,[int]$ty)
+            $g.FillEllipse($brDot,($mpx-5),($mpy-5),10,10)
+            $penDim.Dispose();$brDim.Dispose();$brTDim.Dispose();$penAct.Dispose();$brAct.Dispose();$brTAct.Dispose();$brDot.Dispose()
         }
 
         default {

@@ -67,30 +67,41 @@ Stop proposing. Monitor stays armed for next launch.
 
 ## Sim type guide — always pick the most fitting one
 
+Game-preview sims (prefer these — they show actual gameplay):
+
 | System | Best sim |
 |--------|----------|
-| Genetics, breeding, biology | `dna_helix` |
-| Catching, creature AI, movement | `particle_swarm` |
-| Stats, attributes, character builds | `stat_radar` |
-| Social, trading, relationships | `network` |
-| Ranch, placement, world management | `grid_world` |
-| Core loops, cycles, seasons | `loop_diagram` |
+| Combat, hunting, catching | `creature_chase` |
+| Genetics, breeding, biology | `gene_pool` |
+| Social, bonds, NPC relationships | `bond_grow` |
+| Economy, trading, marketplace | `market_flow` |
+| Exploration, world discovery | `world_discover` |
+| Building, ranch, facility management | `ranch_build` |
+| Plants, farming, ecology | `garden_cycle` |
+| Seasons, cycles, loop systems | `season_turn` |
 | Progression, XP, levelling | `progression_curve` |
-| Economy, resources, currency | `economy_flow` |
+| Stats, attributes, character builds | `stat_radar` |
+| Abstract data flow / catch-all | `loop_diagram` |
 | Feature breakdown, skill trees | `feature_tree` |
 
 ```json
-// Examples
-{"type":"dna_helix","color1":"#3C8CFF","color2":"#AA50E6","speed":1.0}
-{"type":"particle_swarm","mode":"flee","count":20,"color":"#FF4444"}
-{"type":"stat_radar","labels":["SPEED","POWER","RANGE","SKILL","LUCK"],"values":[0.7,0.5,0.8,0.6,0.4],"color":"#FFD700"}
-{"type":"network","labels":["PLAYER","MARKET","BUYER","SELLER","BROKER"],"color":"#DC8C00"}
-{"type":"grid_world","cols":8,"rows":6,"color":"#00C8FF"}
-{"type":"loop_diagram","labels":["SPRING","SUMMER","AUTUMN","WINTER"],"speed":0.3}
+// Game-preview examples (preferred)
+{"type":"creature_chase","color":"#E63232","color2":"#00C8FF","target":"PREY","hunter":"PLAYER"}
+{"type":"gene_pool","color1":"#3C8CFF","color2":"#AA50E6","parentA":"PARENT A","parentB":"PARENT B","offspring":"OFFSPRING"}
+{"type":"bond_grow","color":"#AA50E6","player":"PLAYER","creature":"KINDRED"}
+{"type":"market_flow","color":"#DC8C00","item":"CREATURE","price":"50G","player":"PLAYER","merchant":"TRADER"}
+{"type":"world_discover","color":"#00C8FF","cols":5,"rows":4,"label":"EXPLORE"}
+{"type":"ranch_build","color":"#82C0C0","enclosures":3,"labels":["PEN A","PEN B","PEN C"]}
+{"type":"garden_cycle","color":"#00D050","count":5,"period":3.8,"labels":["HERB","BERRY","FERN","MOSS","ROOT"]}
+{"type":"season_turn","labels":["SPRING","SUMMER","AUTUMN","WINTER"]}
+// Abstract fallbacks
 {"type":"progression_curve","milestones":[1,5,10,25,50],"curve":"logarithmic","color":"#FFD700"}
-{"type":"economy_flow","sources":["QUEST","LOOT","CRAFT"],"sinks":["UPGRADE","BUILD","TRADE"],"color":"#DC8C00"}
+{"type":"stat_radar","labels":["SPEED","POWER","RANGE","SKILL","LUCK"],"values":[0.7,0.5,0.8,0.6,0.4],"color":"#FFD700"}
+{"type":"loop_diagram","labels":["HUNT","TAME","BREED","TRADE"],"speed":0.4}
 {"type":"feature_tree","root":"CORE","children":["Branch A","Branch B","Branch C"],"color":"#AA50E6"}
 ```
+
+**Tailor labels/colors to the GDD section text** — e.g. for a breeding system read the actual creature names and use them as `parentA`/`parentB`/`offspring`. For `ranch_build` use actual facility names. This makes every node feel specific to the loaded GDD.
 
 ---
 
