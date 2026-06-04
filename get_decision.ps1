@@ -6,8 +6,13 @@ $lastWrite = [datetime]::MinValue
 while ($true) {
     Start-Sleep -Milliseconds 400
 
-    # Exit if window closed
+    # Exit if window closed or process behind pid file is dead (crash recovery)
     if (-not (Test-Path $PID_F)) { Write-Output "deny"; return }
+    try {
+        if (-not (Get-Process -Id ([int](Get-Content $PID_F -Raw).Trim()) -ErrorAction SilentlyContinue)) {
+            Write-Output "deny"; return
+        }
+    } catch {}
 
     # Skip read if state.json hasn't changed
     $fi = Get-Item $STATE -ErrorAction SilentlyContinue

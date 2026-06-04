@@ -1771,8 +1771,12 @@ $stateTimer.Add_Tick({
         $script:currentContent = $content
         # sim is stored as a proper JSON object — parse directly
         try {
-            $simObj = $obj.sim
-            if ($simObj -and $simObj.type) {
+            $simObj    = $obj.sim
+            $validSims = @('loop_diagram','progression_curve','economy_flow','feature_tree',
+                           'dna_helix','particle_swarm','stat_radar','network','grid_world',
+                           'creature_chase','gene_pool','bond_grow','market_flow',
+                           'world_discover','ranch_build','garden_cycle','season_turn')
+            if ($simObj -and $simObj.type -and $validSims -contains $simObj.type) {
                 $params = @{}
                 $simObj.PSObject.Properties | Where-Object { $_.Name -ne 'type' } | ForEach-Object { $params[$_.Name] = $_.Value }
                 Start-SimType $simObj.type $params

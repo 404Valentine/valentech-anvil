@@ -31,6 +31,14 @@ $obj.response      = ''
 
 try   { $obj.sim = $Sim | ConvertFrom-Json } catch { $obj.sim = $null }
 
+# Unwrap JSON array string if Claude accidentally passed '["A","B"]' instead of "A","B"
+if ($Components.Count -eq 1) {
+    $s = $Components[0].Trim()
+    if ($s.StartsWith('[') -and $s.EndsWith(']') -and $s.Contains('"')) {
+        try { $parsed = $s | ConvertFrom-Json; $Components = @($parsed) } catch {}
+    }
+}
+
 # Build ArrayList so ConvertTo-Json always emits a JSON array (even 1 element)
 $compsList = New-Object System.Collections.ArrayList
 foreach ($c in $Components) { [void]$compsList.Add([string]$c) }
