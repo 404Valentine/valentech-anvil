@@ -519,14 +519,16 @@ function Read-GDDFile([string]$path) {
         try {
             & $pdftotext $path $tmp 2>$null
             if (-not (Test-Path $tmp)) { throw "PDF extraction failed." }
-            $extracted = [System.IO.File]::ReadAllText($tmp)
+            $sr = [System.IO.StreamReader]::new($tmp, [System.Text.Encoding]::UTF8, $true)
+            try { $extracted = $sr.ReadToEnd() } finally { $sr.Dispose() }
             if ($extracted.Trim().Length -lt 200) { throw "PDF appears to be image-based or empty. Save as .txt first." }
             return $extracted
         } finally {
             if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
         }
     }
-    return [System.IO.File]::ReadAllText($path)
+    $sr = [System.IO.StreamReader]::new($path, [System.Text.Encoding]::UTF8, $true)
+    try { return $sr.ReadToEnd() } finally { $sr.Dispose() }
 }
 
 $browseBtn.Add_Click({
@@ -664,7 +666,7 @@ function Save-Project {
         projectName = $projectName
         gddFilename = $script:gddFileName
         sections    = @($script:sections | ForEach-Object {
-            @{ label=$_.label; category=$_.category; features=@($_.features | ForEach-Object { @{ title=$_.label; desc=$_.desc } }) }
+            @{ label=$_.label; category=$_.category; excerpt=$_.excerpt; features=@($_.features | ForEach-Object { @{ title=$_.label; desc=$_.desc } }) }
         })
         savedAt     = [DateTime]::UtcNow.ToString('o')
     }
@@ -701,27 +703,34 @@ function Open-SavesPanel {
     $dlg.Dispose()
     try {
         $data = Get-Content $selected.FullName -Raw | ConvertFrom-Json
-        $script:gddFileName = $data.gddFilename
-        $fileLabel.Text = $data.gddFilename; $fileLabel.ForeColor = $TEXT_MID
+        $script:gddFileName = if ($data.gddFilename) { [string]$data.gddFilename } else { '' }
+        $fileLabel.Text = $script:gddFileName; $fileLabel.ForeColor = $TEXT_MID
         $script:sections.Clear(); $nodeFlow.Controls.Clear()
         foreach ($sec in $data.sections) {
-            $cat = if ($sec.category) { $sec.category } else { Get-SystemCategory $sec.label }
+            $secLabel = if ($sec.label)    { [string]$sec.label }    else { 'Unknown' }
+            $cat      = if ($sec.category) { [string]$sec.category } else { Get-SystemCategory $secLabel }
             $col = Get-CategoryColor $cat
             $secObj = @{
                 id = 'sys_' + [System.Guid]::NewGuid().ToString('N').Substring(0,6)
-                label = $sec.label; color = $col; category = $cat
+                label = $secLabel; color = $col; category = $cat
+                excerpt = if ($sec.excerpt) { [string]$sec.excerpt } else { '' }
                 features = [System.Collections.Generic.List[hashtable]]::new()
                 collapsed = $false
             }
             foreach ($feat in $sec.features) {
                 $fid = [System.Guid]::NewGuid().ToString('N').Substring(0,8)
-                $secObj.features.Add(@{ id=$fid; label=$feat.title; desc=$feat.desc; sectionId=$secObj.id })
+                $secObj.features.Add(@{ id=$fid; label=[string]$feat.title; desc=[string]$feat.desc; sectionId=$secObj.id })
             }
             $script:sections.Add($secObj)
         }
         Save-Features
         Rebuild-NodeList
         Update-FrameworkButton
+        $propTitleL.Text = ''; $propDescL.Text = ''
+        $checkPanel.Controls.Clear(); $script:checkboxes.Clear()
+        $script:currentTitle = ''; $script:currentContent = ''
+        Set-Buttons-Idle
+        Write-StateFields @{ title = ''; content = ''; response = '' }
         $descBox.Text = "Loaded: $($data.projectName)`n`nSelect a concept node to continue."
     } catch {
         [System.Windows.Forms.MessageBox]::Show("Could not load save.`n$_", "ValenTech") | Out-Null
@@ -736,7 +745,13 @@ function Parse-GDD([string]$raw) {
     $script:sections.Clear()
     $nodeFlow.Controls.Clear()
 
-    Write-StateFields @{ gdd_raw = $raw }
+    # Clear stale proposal panel from previous GDD
+    $propTitleL.Text = ''; $propDescL.Text = ''
+    $checkPanel.Controls.Clear(); $script:checkboxes.Clear()
+    $script:currentTitle = ''; $script:currentContent = ''
+    Start-SimType 'waiting_pulse' @{}; Set-Buttons-Idle
+
+    Write-StateFields @{ gdd_raw = $raw; title = ''; content = ''; response = '' }
 
     $stripWords = @('system','overview','design','details','mechanic','feature','rules','structure',
                     'description','notes','examples','example','function','functions','types','type',
@@ -822,6 +837,7 @@ function Parse-GDD([string]$raw) {
     foreach ($s in $sorted) { $script:sections.Add($s) }
 
     Rebuild-NodeList
+    Update-FrameworkButton
 
     $nodesArr = @($script:sections | ForEach-Object {
         @{ id=$_.id; label=$_.label; type='system'; confirmed=$false; sectionId=$_.id }
