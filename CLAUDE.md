@@ -23,9 +23,12 @@ If the user says "proposals not working", "monitor not running", or "start the m
 ### NODE_SELECTED
 When you receive `NODE_SELECTED ts=<ts> node=<id> request=<label>`:
 
-1. **Read state.json first** and extract `gdd_section` — this is the actual GDD text for that system
-2. Use it to tailor your proposal: the Title, Content, Sim type, and Components should all reflect what the GDD *actually says* about that system, not just what its name implies
-3. Then call propose_one.ps1:
+1. **Read state.json first** and extract two things:
+   - `gdd_section` — the actual GDD text for this system
+   - `nodes` — the full list of all system nodes in the project
+2. From `nodes`, collect every `.label` value into a reference list — these are the **only valid strings** for `deps` entries. Do not use any label not present in this list.
+3. Use `gdd_section` to tailor your proposal: the Title, Content, Sim type, and Components should all reflect what the GDD *actually says* about that system, not just what its name implies
+4. Then call propose_one.ps1:
 
 ```powershell
 $dec = & ".\propose_one.ps1" `
@@ -34,8 +37,17 @@ $dec = & ".\propose_one.ps1" `
     -Sim '<sim JSON — pick the best type for this system>' `
     -NodeId "<node id from event>" `
     -RequestTs "<ts from event>" `
-    -Components "<component 1>","<component 2>","<component 3>"
+    -Components "<component 1 display text>",`
+                "<component 2 display text>",`
+                "<component 3 display text>" `
+    -ComponentData '[
+        {"construct":"Manager","fields":[{"name":"exampleField","type":"List<T>"}],"deps":["OtherSystem"]},
+        {"construct":"ScriptableObject","fields":[{"name":"data","type":"ItemData"}],"deps":[]},
+        {"construct":"MonoBehaviour","fields":[{"name":"speed","type":"float"}],"deps":["Inventory"]}
+    ]'
 ```
+
+**CRITICAL:** `-Components` and `-ComponentData` must have the **same count and same order** — index 0 of ComponentData corresponds to index 0 of Components. ComponentData is a JSON string.
 
 **$dec** will be one of:
 - `confirm` — user accepted. Features saved automatically. Wait for next NODE_SELECTED.
@@ -119,6 +131,70 @@ Game-preview sims (prefer these — they show actual gameplay):
 -Components '["Component one","Component two"]'
 ```
 
+**`-ComponentData`** is a single JSON string — a parallel array of metadata objects, one per component:
+
+| Field | Type | Values |
+|---|---|---|
+| `construct` | string | `Manager` `ScriptableObject` `MonoBehaviour` `EventBus` `Utility` `Interface` |
+| `fields` | array of `{name, type}` | C# field hints — name + type string |
+| `deps` | array of strings | Names of other game systems this component depends on |
+
+---
+
+## Unity construct selection guide
+
+Pick the construct that best describes how this component would live in a Unity project:
+
+| Construct | When to use | Examples |
+|---|---|---|
+| `Manager` | Singleton service that runs gameplay logic; other systems call into it | `InventoryManager`, `CaptureManager`, `TradeManager`, `BreedingManager` |
+| `ScriptableObject` | Pure data container with no scene presence; defines a type of thing | `CreatureData`, `ItemDefinition`, `BiomeConfig`, `AbilityStats` |
+| `MonoBehaviour` | Attached to a GameObject in the scene; drives runtime behaviour | `CreatureAI`, `PlayerController`, `StealthDetector`, `PlantGrowth` |
+| `EventBus` | Pub/sub channel decoupling two systems that shouldn't reference each other | `CaptureEvents`, `TradeEvents`, `SeasonEvents` |
+| `Utility` | Static helper — no state, pure functions | `GeneticsMath`, `NoiseSampler`, `LootTable` |
+| `Interface` | Abstract contract implemented by multiple classes | `IInteractable`, `IBreedable`, `IDamageable`, `IHarvestable` |
+
+**Rules for picking:**
+- A system's *coordinator* is usually a `Manager`
+- A system's *config/stats/definition* is usually a `ScriptableObject`
+- A system's *in-world actor* is usually a `MonoBehaviour`
+- When two systems need to react to each other without coupling, use an `EventBus`
+- If a component is purely computational with no state, use `Utility`
+- If multiple types share a behaviour contract, use `Interface`
+
+---
+
+## Component display text and field naming
+
+**Component display text** (the `-Components` strings the user sees as checkboxes) should read like a Unity class name followed by a short purpose phrase:
+```
+"InventoryManager — stores and queries player items"
+"CreatureData — defines species stats and trait ranges"
+"CaptureHandler — drives in-scene stealth and capture logic"
+```
+
+**Field names** must be valid C# identifiers in camelCase. **Field types** must be real C# types:
+
+| Category | Types to use |
+|---|---|
+| Primitives | `float` `int` `bool` `string` |
+| Collections | `List<T>` `Dictionary<K,V>` `T[]` |
+| Unity types | `GameObject` `Transform` `Sprite` `AudioClip` `ScriptableObject` |
+| Custom types | Use the ScriptableObject or class name you defined elsewhere in this proposal |
+
+Do not invent types. If you're unsure what field type applies, leave `fields: []`.
+
+---
+
+## ComponentData rules
+
+- ComponentData array length **must equal** Components array length
+- `deps` entries must be copied **verbatim** from the `nodes[].label` list you extracted in step 2 of NODE_SELECTED — never invent or approximate a label
+- Infer which systems are deps by reading `gdd_section`: if this system's GDD text references another system's concept, find that system's exact label in the nodes list and add it
+- A system cannot depend on itself — never add the current system's own label to `deps`
+- `fields` can be empty `[]` if no clear data model yet — do not fabricate fields
+- If no clear dependency exists, use `[]`
+
 ---
 
 ## Key file paths (relative to this folder)
@@ -126,7 +202,7 @@ Game-preview sims (prefer these — they show actual gameplay):
 | File | Purpose |
 |------|---------|
 | `state.json` | Shared runtime state — read with ConvertFrom-Json, write with ConvertTo-Json |
-| `features.json` | Confirmed features — `{ "SystemName": [{ "title": "...", "desc": "..." }] }` |
+| `features.json` | Confirmed features — `{ "SystemName": [{ "title": "...", "desc": "...", "unityConstruct": "Manager", "dataFields": [{"name":"x","type":"T"}], "dependencies": ["OtherSystem"] }] }` |
 | `propose_one.ps1` | Write a proposal and wait for user decision |
 | `get_decision.ps1` | Called internally by propose_one.ps1 — do not call directly |
 | `generate_framework.ps1` | Write the final framework markdown file |

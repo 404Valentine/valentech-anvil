@@ -4,7 +4,8 @@ param(
     [string]$Sim,
     [string]$NodeId,
     [string]$RequestTs,
-    [string[]]$Components = @()   # Pass as native PS string array: -Components "A","B","C"
+    [string[]]$Components = @(),  # Pass as native PS string array: -Components "A","B","C"
+    [string]$ComponentData = '[]' # JSON array: [{"construct":"Manager","fields":[{"name":"x","type":"T"}],"deps":["SysName"]}]
 )
 $STATE = Join-Path $PSScriptRoot "state.json"
 
@@ -43,6 +44,19 @@ if ($Components.Count -eq 1) {
 $compsList = New-Object System.Collections.ArrayList
 foreach ($c in $Components) { [void]$compsList.Add([string]$c) }
 $obj.components = $compsList
+
+# Write component metadata using ArrayList so ConvertTo-Json always emits a proper JSON array
+# (ConvertFrom-Json returns a wrapped PS type that serializes as {"value":[...],"Count":N} — ArrayList fixes this)
+$cdList = New-Object System.Collections.ArrayList
+try {
+    $parsed = $ComponentData | ConvertFrom-Json
+    if ($parsed -is [array]) {
+        foreach ($item in $parsed) { [void]$cdList.Add($item) }
+    } elseif ($null -ne $parsed) {
+        [void]$cdList.Add($parsed)
+    }
+} catch {}
+$obj.component_data = $cdList
 
 Write-Atomic $STATE ($obj | ConvertTo-Json -Compress -Depth 6)
 

@@ -468,13 +468,27 @@ $btnConfirm.Add_Click({
     if ($sec -and $script:currentTitle) {
         if ($script:checkboxes.Count -gt 0) {
             $checkedItems = $script:checkboxes | Where-Object { $_.Checked }
+            # Load component metadata so we can store Unity construct info per feature
+            $cdRaw   = Get-Content $STATE -Raw -ErrorAction SilentlyContinue
+            $cdObj   = try { $cdRaw | ConvertFrom-Json } catch { $null }
+            $compData = if ($cdObj -and $cdObj.component_data) { @($cdObj.component_data) } else { @() }
             foreach ($cb in $checkedItems) {
-                $fid = [System.Guid]::NewGuid().ToString('N').Substring(0, 8)
-                $sec.features.Add(@{ id=$fid; label=$cb.Text; desc=$script:currentContent; sectionId=$sec.id })
+                $fid  = [System.Guid]::NewGuid().ToString('N').Substring(0, 8)
+                $idx  = if ($null -ne $cb.Tag) { [int]$cb.Tag } else { -1 }
+                $meta = if ($idx -ge 0 -and $compData.Count -gt $idx) { $compData[$idx] } else { $null }
+                $sec.features.Add(@{
+                    id             = $fid
+                    label          = $cb.Text
+                    desc           = $script:currentContent
+                    sectionId      = $sec.id
+                    unityConstruct = if ($meta -and $meta.construct) { [string]$meta.construct } else { '' }
+                    dataFields     = if ($meta -and $meta.fields)    { $meta.fields }            else { @() }
+                    dependencies   = if ($meta -and $meta.deps)      { $meta.deps }              else { @() }
+                })
             }
         } else {
             $fid = [System.Guid]::NewGuid().ToString('N').Substring(0, 8)
-            $sec.features.Add(@{ id=$fid; label=$script:currentTitle; desc=$script:currentContent; sectionId=$sec.id })
+            $sec.features.Add(@{ id=$fid; label=$script:currentTitle; desc=$script:currentContent; sectionId=$sec.id; unityConstruct=''; dataFields=@(); dependencies=@() })
         }
         Save-Features; Rebuild-NodeList; Update-FrameworkButton
     }
@@ -608,11 +622,17 @@ function Save-Features {
     foreach ($sec in $script:sections) {
         if ($sec.features.Count -gt 0) {
             $obj[$sec.label] = @($sec.features | ForEach-Object {
-                @{ title=$_.label; desc=[string]$_.desc }
+                @{
+                    title          = $_.label
+                    desc           = [string]$_.desc
+                    unityConstruct = if ($_.unityConstruct) { [string]$_.unityConstruct } else { '' }
+                    dataFields     = if ($_.dataFields)     { $_.dataFields }             else { @() }
+                    dependencies   = if ($_.dependencies)   { $_.dependencies }           else { @() }
+                }
             })
         }
     }
-    $json = ConvertTo-Json $obj -Depth 4 -Compress
+    $json = ConvertTo-Json $obj -Depth 6 -Compress
     Set-Content $FEATURES_F $json -NoNewline
 }
 
@@ -629,9 +649,17 @@ function Load-Features {
                 foreach ($item in $prop.Value) {
                     $fid = [System.Guid]::NewGuid().ToString('N').Substring(0,8)
                     if ($item -is [string]) {
-                        $sec.features.Add(@{ id=$fid; label=$item; desc=""; sectionId=$sec.id })
+                        $sec.features.Add(@{ id=$fid; label=$item; desc=""; sectionId=$sec.id; unityConstruct=''; dataFields=@(); dependencies=@() })
                     } else {
-                        $sec.features.Add(@{ id=$fid; label=$item.title; desc=$item.desc; sectionId=$sec.id })
+                        $sec.features.Add(@{
+                            id             = $fid
+                            label          = $item.title
+                            desc           = $item.desc
+                            sectionId      = $sec.id
+                            unityConstruct = if ($item.unityConstruct) { [string]$item.unityConstruct } else { '' }
+                            dataFields     = if ($item.dataFields)     { $item.dataFields }             else { @() }
+                            dependencies   = if ($item.dependencies)   { $item.dependencies }           else { @() }
+                        })
                     }
                 }
             }
@@ -662,16 +690,43 @@ function Save-Project {
     $projectName = $tb.Text.Trim(); $dlg.Dispose()
     $saveFile = Join-Path $savesDir (($projectName -replace '[\\/:*?"<>|]', '_') + ".json")
     $data = @{
-        version     = 1
+        version     = 2
         projectName = $projectName
         gddFilename = $script:gddFileName
         sections    = @($script:sections | ForEach-Object {
-            @{ label=$_.label; category=$_.category; excerpt=$_.excerpt; features=@($_.features | ForEach-Object { @{ title=$_.label; desc=$_.desc } }) }
+            @{ label=$_.label; category=$_.category; excerpt=$_.excerpt; features=@($_.features | ForEach-Object {
+                @{
+                    title          = $_.label
+                    desc           = $_.desc
+                    unityConstruct = if ($_.unityConstruct) { [string]$_.unityConstruct } else { '' }
+                    dataFields     = if ($_.dataFields)     { $_.dataFields }             else { @() }
+                    dependencies   = if ($_.dependencies)   { $_.dependencies }           else { @() }
+                }
+            }) }
         })
         savedAt     = [DateTime]::UtcNow.ToString('o')
     }
     $data | ConvertTo-Json -Depth 6 -Compress | Set-Content $saveFile -Encoding UTF8
     [System.Windows.Forms.MessageBox]::Show("Saved to:`n$saveFile", "ValenTech", 'OK', 'Information') | Out-Null
+}
+
+function Migrate-Save([string]$filePath, $data) {
+    # Upgrades pre-v2 save files in place. Adds unityConstruct, dataFields, dependencies to any
+    # feature missing them, bumps version to 2, and rewrites the file. Returns the updated data.
+    if ($data.sections) {
+        foreach ($sec in $data.sections) {
+            if ($sec.features) {
+                foreach ($feat in $sec.features) {
+                    if ($null -eq $feat.unityConstruct) { $feat | Add-Member -NotePropertyName 'unityConstruct' -NotePropertyValue ''   -Force }
+                    if ($null -eq $feat.dataFields)     { $feat | Add-Member -NotePropertyName 'dataFields'     -NotePropertyValue @()  -Force }
+                    if ($null -eq $feat.dependencies)   { $feat | Add-Member -NotePropertyName 'dependencies'   -NotePropertyValue @()  -Force }
+                }
+            }
+        }
+    }
+    $data | Add-Member -NotePropertyName 'version' -NotePropertyValue 2 -Force
+    try { $data | ConvertTo-Json -Depth 6 -Compress | Set-Content $filePath -Encoding UTF8 } catch {}
+    return $data
 }
 
 function Open-SavesPanel {
@@ -703,6 +758,8 @@ function Open-SavesPanel {
     $dlg.Dispose()
     try {
         $data = Get-Content $selected.FullName -Raw | ConvertFrom-Json
+        $saveVersion = if ($null -ne $data.version) { [int]$data.version } else { 0 }
+        if ($saveVersion -lt 2) { $data = Migrate-Save $selected.FullName $data }
         $script:gddFileName = if ($data.gddFilename) { [string]$data.gddFilename } else { '' }
         $fileLabel.Text = $script:gddFileName; $fileLabel.ForeColor = $TEXT_MID
         $script:sections.Clear(); $nodeFlow.Controls.Clear()
@@ -719,7 +776,15 @@ function Open-SavesPanel {
             }
             foreach ($feat in $sec.features) {
                 $fid = [System.Guid]::NewGuid().ToString('N').Substring(0,8)
-                $secObj.features.Add(@{ id=$fid; label=[string]$feat.title; desc=[string]$feat.desc; sectionId=$secObj.id })
+                $secObj.features.Add(@{
+                    id             = $fid
+                    label          = [string]$feat.title
+                    desc           = [string]$feat.desc
+                    sectionId      = $secObj.id
+                    unityConstruct = if ($feat.unityConstruct) { [string]$feat.unityConstruct } else { '' }
+                    dataFields     = if ($feat.dataFields)     { $feat.dataFields }             else { @() }
+                    dependencies   = if ($feat.dependencies)   { $feat.dependencies }           else { @() }
+                })
             }
             $script:sections.Add($secObj)
         }
@@ -731,7 +796,10 @@ function Open-SavesPanel {
         $script:currentTitle = ''; $script:currentContent = ''
         $script:nodeSelectedAt = [datetime]::MinValue
         Set-Buttons-Idle
-        Write-StateFields @{ title = ''; content = ''; response = '' }
+        $nodesArr = @($script:sections | ForEach-Object {
+            @{ id=$_.id; label=$_.label; type='system'; confirmed=$false; sectionId=$_.id }
+        })
+        Write-StateFields @{ title = ''; content = ''; response = ''; nodes = $nodesArr }
         $descBox.Text = "Loaded: $($data.projectName)`n`nSelect a concept node to continue."
     } catch {
         [System.Windows.Forms.MessageBox]::Show("Could not load save.`n$_", "ValenTech") | Out-Null
@@ -1810,7 +1878,7 @@ $stateTimer.Add_Tick({
         $script:checkboxes.Clear()
         $comps = @($obj.components)
         if ($comps -and $comps.Count -gt 0) {
-            $cy = 0
+            $cy = 0; $i = 0
             foreach ($comp in $comps) {
                 $cb = New-Object System.Windows.Forms.CheckBox
                 $cb.Text      = [string]$comp
@@ -1820,9 +1888,10 @@ $stateTimer.Add_Tick({
                 $cb.AutoSize  = $false
                 $cb.SetBounds(0, $cy, $checkPanel.Width, 26)
                 $cb.Checked   = $true
+                $cb.Tag       = $i  # index into component_data metadata array
                 $checkPanel.Controls.Add($cb)
                 $script:checkboxes.Add($cb)
-                $cy += 28
+                $cy += 28; $i++
             }
             $checkPanel.Height = $cy
             $moreLabel.Visible = ($cy -gt $checkOuter.Height)

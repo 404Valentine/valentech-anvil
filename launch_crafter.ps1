@@ -29,7 +29,8 @@ $blank = @'
   "gdd_filename":   "",
   "framework_path": "",
   "gdd_section":    "",
-  "components":     []
+  "components":     [],
+  "component_data": []
 }
 '@
 Set-Content $STATE $blank -NoNewline
