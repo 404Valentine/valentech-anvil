@@ -636,38 +636,6 @@ function Save-Features {
     Set-Content $FEATURES_F $json -NoNewline
 }
 
-function Load-Features {
-    # Only used internally during Parse-GDD to restore session cache — NOT called on startup
-    if (-not (Test-Path $FEATURES_F)) { return }
-    $raw = Get-Content $FEATURES_F -Raw -ErrorAction SilentlyContinue
-    if (-not $raw) { return }
-    try {
-        $obj = $raw | ConvertFrom-Json
-        foreach ($prop in $obj.PSObject.Properties) {
-            $sec = $script:sections | Where-Object { $_.label -eq $prop.Name } | Select-Object -First 1
-            if ($sec) {
-                foreach ($item in $prop.Value) {
-                    $fid = [System.Guid]::NewGuid().ToString('N').Substring(0,8)
-                    if ($item -is [string]) {
-                        $sec.features.Add(@{ id=$fid; label=$item; desc=""; sectionId=$sec.id; unityConstruct=''; dataFields=@(); dependencies=@() })
-                    } else {
-                        $sec.features.Add(@{
-                            id             = $fid
-                            label          = $item.title
-                            desc           = $item.desc
-                            sectionId      = $sec.id
-                            unityConstruct = if ($item.unityConstruct) { [string]$item.unityConstruct } else { '' }
-                            dataFields     = if ($item.dataFields)     { $item.dataFields }             else { @() }
-                            dependencies   = if ($item.dependencies)   { $item.dependencies }           else { @() }
-                        })
-                    }
-                }
-            }
-        }
-        Update-FrameworkButton
-    } catch {}
-}
-
 function Save-Project {
     $savesDir = Join-Path $ROOT "saves"
     if (-not (Test-Path $savesDir)) { New-Item -ItemType Directory $savesDir -Force | Out-Null }
@@ -1090,8 +1058,15 @@ function Select-Node([hashtable]$n) {
         gdd_section   = if ($sec -and $sec.excerpt) { $sec.excerpt } else { '' }
     }
 
-    $secLabel = if ($n.sectionId) { ($script:sections | Where-Object { $_.id -eq $n.sectionId } | Select-Object -First 1).label } else { '' }
-    $descBox.Text = $(if ($secLabel) { "[ $secLabel ]" } else { "" }) + "  " + $n.label + "`n`nWaiting for proposals..."
+    # Clear any stale proposal from a previously selected node — title/checkboxes
+    # must not linger on screen while we wait for the new proposal to arrive.
+    $propTitleL.Text = ''
+    $checkPanel.Controls.Clear()
+    $script:checkboxes.Clear()
+    $script:currentTitle   = ''
+    $script:currentContent = ''
+
+    $descBox.Text = "  " + $n.label + "`n`nWaiting for proposals..."
     $script:nodeSelectedAt = [datetime]::UtcNow
     Set-Buttons-Idle
     Start-SimType 'waiting_pulse' @{}
@@ -1180,7 +1155,7 @@ function Draw-Sim {
             $curv = if ($p.curve) { $p.curve } else { 'exponential' }
             $col  = if ($p.color) { try { [System.Drawing.ColorTranslator]::FromHtml($p.color) } catch { $LOOP_COL } } else { $LOOP_COL }
             $pad  = 40; $gw = $cw-$pad*2; $gh = $ch-$pad*2
-            if ($gw -le 0 -or $gh -le 0) { $g.Dispose(); return }
+            if ($gw -le 0 -or $gh -le 0) { $g.Dispose(); $bmp.Dispose(); return }
 
             $gp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(25,255,255,255),1)
             for ($gi=0;$gi-le 4;$gi++) {
