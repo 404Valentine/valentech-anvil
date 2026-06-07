@@ -5,7 +5,6 @@
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCH_F="$ROOT/launch_ts.txt"
-PID_F="$ROOT/window.pid"
 MONITOR="$ROOT/monitor.sh"
 
 LAST_LAUNCH_TS=0

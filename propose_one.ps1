@@ -25,6 +25,22 @@ if (-not $raw -or $raw.Trim() -eq '') { Write-Output "deny"; return }
 
 try { $obj = $raw | ConvertFrom-Json } catch { Write-Output "deny"; return }
 
+# FIX (root cause of stale-proposal/wrong-node race — see window.ps1's
+# proposal-display gate for the full trace): if the user already selected a
+# different node while this proposal was being generated, request_ts in
+# state.json will have moved on. Bail out BEFORE writing — otherwise the
+# `$obj.selected_node = $NodeId` below clobbers state.json with a stale node id
+# while request/request_ts already reflect the new selection, leaving an
+# internally-inconsistent record that the window could briefly display (and the
+# user could confirm) as if it belonged to the node they're now looking at.
+# get_decision.ps1 performs the same check on every poll; this just catches the
+# common case immediately instead of writing garbage first and self-correcting
+# a moment later.
+$liveTs = [string]$obj.request_ts
+if ($liveTs -and $liveTs -ne '0' -and $liveTs -ne $RequestTs) {
+    Write-Output "new_request"; return
+}
+
 $obj.title         = $Title
 $obj.content       = $Content
 $obj.selected_node = $NodeId

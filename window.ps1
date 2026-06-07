@@ -20,6 +20,7 @@ $script:currentTitle       = ""
 $script:currentContent     = ""
 $script:gddFileName        = ""
 $script:lastFrameworkPath  = ""
+$script:lastGenerateTs     = 0
 $script:checkboxes         = [System.Collections.Generic.List[System.Windows.Forms.CheckBox]]::new()
 $script:stateLastWrite     = [datetime]::MinValue
 $script:nodeSelectedAt     = [datetime]::MinValue
@@ -633,7 +634,12 @@ function Save-Features {
         }
     }
     $json = ConvertTo-Json $obj -Depth 6 -Compress
-    Set-Content $FEATURES_F $json -NoNewline
+    # FIX (consistency): features.json is read externally by Claude when generating
+    # the framework (CLAUDE.md's GENERATE_FRAMEWORK step). Use the same atomic
+    # tmp+Move-Item pattern as state.json (Write-Atomic, window.ps1:419) instead of
+    # a plain truncate-then-write Set-Content, so an external read can never observe
+    # a partially-written file.
+    Write-Atomic $FEATURES_F $json
 }
 
 function Save-Project {
@@ -1050,17 +1056,34 @@ function Select-Node([hashtable]$n) {
     }
 
     $sec = $script:sections | Where-Object { $_.id -eq $n.id } | Select-Object -First 1
+    # FIX (real root cause of the lingering-old-proposal display): this write sets
+    # selected_node to the NEW node, but title/content/sim/components in state.json
+    # still hold the PREVIOUS proposal — propose_one.ps1 hasn't run yet. The display
+    # gate below only checks `selected_node -eq currentNode` + non-empty title, so
+    # for one tick it sees "new node" + "old (non-empty) title" and redisplays the
+    # stale proposal under the new node — clobbering the "Generating..." text set
+    # below. Clear title/content/sim/components in THE SAME atomic write so the
+    # gate can never observe a matching selected_node alongside stale proposal text.
     Write-StateFields @{
-        request       = $n.label
-        request_ts    = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        selected_node = $n.id
-        response      = ''
-        gdd_section   = if ($sec -and $sec.excerpt) { $sec.excerpt } else { '' }
+        request         = $n.label
+        request_ts      = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        selected_node   = $n.id
+        response        = ''
+        gdd_section     = if ($sec -and $sec.excerpt) { $sec.excerpt } else { '' }
+        title           = ''
+        content         = ''
+        sim             = ''
+        components      = @()
+        component_data  = @()
     }
 
-    # Clear any stale proposal from a previously selected node — title/checkboxes
-    # must not linger on screen while we wait for the new proposal to arrive.
-    $propTitleL.Text = ''
+    # Clear any stale proposal from a previously selected node — title/desc/
+    # checkboxes must not linger on screen while we wait for the new proposal
+    # to arrive. Mirrors $btnReroll.Add_Click (window.ps1:497-505): show
+    # "Generating..." instead of leaving the old proposal's title AND
+    # description visible (previously only the title was cleared here).
+    $propTitleL.Text = "Generating..."
+    $propDescL.Text  = ""
     $checkPanel.Controls.Clear()
     $script:checkboxes.Clear()
     $script:currentTitle   = ''
@@ -1816,9 +1839,17 @@ $stateTimer.Add_Tick({
     $title   = [string]$obj.title
     $content = [string]$obj.content
     $fwPath  = [string]$obj.framework_path
+    $genTs   = [int64]0
+    [int64]::TryParse([string]$obj.generate_ts, [ref]$genTs) | Out-Null
 
-    # Check for completed framework
-    if ($fwPath -and $fwPath -ne $script:lastFrameworkPath) {
+    # FIX: detect completion via generate_ts (unique per request, written alongside
+    # framework_path — see generate_framework.ps1:32 / window.ps1:521) rather than
+    # framework_path itself. Regenerating the SAME GDD's framework produces an
+    # identical output path ("..\GDDs\${gddFileName}_Framework.md"), so comparing
+    # paths never re-fired: the GENERATE button stayed stuck on "GENERATING..."
+    # (disabled) and the saved-dialog/Notepad reopen never happened on a regenerate.
+    if ($fwPath -and $genTs -ne 0 -and $genTs -ne $script:lastGenerateTs) {
+        $script:lastGenerateTs    = $genTs
         $script:lastFrameworkPath = $fwPath
         $btnFramework.Text    = 'FRAMEWORK'
         Update-FrameworkButton
@@ -1827,7 +1858,20 @@ $stateTimer.Add_Tick({
         Start-Process notepad.exe $fwPath
     }
 
-    if ($title -and $resp -eq '' -and ($title -ne $script:currentTitle -or $content -ne $script:currentContent)) {
+    # FIX (stale-proposal / wrong-node attribution race): propose_one.ps1 writes
+    # `selected_node = $NodeId` from Claude's (possibly stale) read — if the user
+    # clicked a different node while Claude was generating, that overwrite can
+    # leave selected_node pointing at the OLD node while request/request_ts
+    # already reflect the NEW selection (propose_one.ps1 never touches those).
+    # get_decision.ps1 self-corrects for Claude via request_ts, but nothing here
+    # verified the incoming proposal actually belongs to the node the user is
+    # currently looking at — so a stale proposal could be displayed AND, if
+    # confirmed, saved under $script:currentNode (the new node), mis-attributing
+    # the feature to the wrong system. Require selected_node to match before
+    # ever showing/accepting a proposal.
+    $propNode = [string]$obj.selected_node
+    if ($title -and $resp -eq '' -and $propNode -eq $script:currentNode -and
+        ($title -ne $script:currentTitle -or $content -ne $script:currentContent)) {
         $script:currentTitle   = $title
         $script:currentContent = $content
         # sim is stored as a proper JSON object — parse directly
