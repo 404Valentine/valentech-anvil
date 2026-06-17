@@ -26,11 +26,21 @@ $blank = @'
   "request_ts":     0,
   "sim_issues_ts":  0,
   "generate_ts":    0,
-  "gdd_filename":   "",
-  "framework_path": "",
+  "chassis_format":      "",
+  "chassis_output_path": "",
+  "chassis_path":        "",
   "gdd_section":    "",
   "components":     [],
-  "component_data": []
+  "component_data": [],
+  "sync_path":          "",
+  "sync_ts":            0,
+  "sync_diff_ts":       0,
+  "reimport_path":      "",
+  "reimport_ts":        0,
+  "reimport_data_ts":   0,
+  "gdd_export_path":    "",
+  "gdd_export_ts":      0,
+  "gdd_export_done_ts": 0
 }
 '@
 Set-Content $STATE $blank -NoNewline

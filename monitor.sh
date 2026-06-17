@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fires NODE_SELECTED, SIM_ISSUES_REPORTED, GENERATE_FRAMEWORK events.
+# Fires NODE_SELECTED, SIM_ISSUES_REPORTED, GENERATE_CHASSIS events.
 # Exits automatically when the CrafterTech window closes (or fails to start,
 # or crashes leaving a stale pid file behind).
 
@@ -10,6 +10,9 @@ PID_F="$ROOT/window.pid"
 LAST_REQ_TS=0
 LAST_SIM_TS=0
 LAST_GEN_TS=0
+LAST_SYNC_TS=0
+LAST_REIMPORT_TS=0
+LAST_GDD_EXPORT_TS=0
 
 echo "MONITOR_START"
 
@@ -30,7 +33,7 @@ fi
 
 # FIX (crash recovery, mirrors get_decision.ps1's Get-Process check): a stale
 # window.pid left behind by a crash/force-kill (FormClosing only removes it on
-# a graceful exit — window.ps1:1916) must not be mistaken for a live window.
+# a graceful exit — window.ps1:1846) must not be mistaken for a live window.
 is_pid_alive() {
   local pid="$1"
   [ -n "$pid" ] || return 1
@@ -63,7 +66,7 @@ while true; do
   if [ -f "$STATE" ]; then
     # FIX (torn-read race): snapshot the file ONCE per poll so request_ts,
     # selected_node and request always come from the same atomic write —
-    # window.ps1 writes them together (window.ps1:1059-1064) and reading them
+    # window.ps1 writes them together (window.ps1:1184-1193) and reading them
     # via 5 separate `grep` invocations let a concurrent Move-Item swap the
     # file mid-poll, producing events whose node/request didn't match their ts.
     DATA=$(cat "$STATE" 2>/dev/null)
@@ -95,7 +98,29 @@ while true; do
     fi
     if [ "$GEN_TS" != "$LAST_GEN_TS" ] && [ "$GEN_TS" != "0" ]; then
       LAST_GEN_TS=$GEN_TS
-      echo "GENERATE_FRAMEWORK ts=$GEN_TS"
+      echo "GENERATE_CHASSIS ts=$GEN_TS"
+    fi
+
+    SYNC_TS=$(grep -o '"sync_ts":[0-9]*' <<< "$DATA" | grep -o '[0-9]*')
+    REIMPORT_TS=$(grep -o '"reimport_ts":[0-9]*' <<< "$DATA" | grep -o '[0-9]*')
+    GDD_EXPORT_TS=$(grep -o '"gdd_export_ts":[0-9]*' <<< "$DATA" | grep -o '[0-9]*')
+    SYNC_TS=${SYNC_TS:-0}
+    REIMPORT_TS=${REIMPORT_TS:-0}
+    GDD_EXPORT_TS=${GDD_EXPORT_TS:-0}
+
+    if [ "$SYNC_TS" != "$LAST_SYNC_TS" ] && [ "$SYNC_TS" != "0" ]; then
+      LAST_SYNC_TS=$SYNC_TS
+      echo "SYNC_REQUESTED ts=$SYNC_TS"
+    fi
+
+    if [ "$REIMPORT_TS" != "$LAST_REIMPORT_TS" ] && [ "$REIMPORT_TS" != "0" ]; then
+      LAST_REIMPORT_TS=$REIMPORT_TS
+      echo "REIMPORT_REQUESTED ts=$REIMPORT_TS"
+    fi
+
+    if [ "$GDD_EXPORT_TS" != "$LAST_GDD_EXPORT_TS" ] && [ "$GDD_EXPORT_TS" != "0" ]; then
+      LAST_GDD_EXPORT_TS=$GDD_EXPORT_TS
+      echo "GDD_EXPORT_REQUESTED ts=$GDD_EXPORT_TS"
     fi
   fi
 

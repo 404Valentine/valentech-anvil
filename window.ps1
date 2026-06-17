@@ -19,8 +19,11 @@ $script:currentNode        = ""
 $script:currentTitle       = ""
 $script:currentContent     = ""
 $script:gddFileName        = ""
-$script:lastFrameworkPath  = ""
 $script:lastGenerateTs     = 0
+$script:pendingGenerateTs  = 0
+$script:lastSyncDiffTs     = 0
+$script:lastReimportDataTs = 0
+$script:lastGddExportTs    = 0
 $script:checkboxes         = [System.Collections.Generic.List[System.Windows.Forms.CheckBox]]::new()
 $script:stateLastWrite     = [datetime]::MinValue
 $script:nodeSelectedAt     = [datetime]::MinValue
@@ -116,8 +119,8 @@ function Make-ChromeBtn([string]$text, [int]$x, [System.Drawing.Color]$hFg, [Sys
     $b.Size = New-Object System.Drawing.Size(44, 44); $b.Location = New-Object System.Drawing.Point($x, 7)
     $b.Cursor = 'Hand'; $b.Add_Click($onClick)
     $hf = $hFg; $hbk = $hBg
-    $b.Add_MouseEnter({ $b.ForeColor = $hf; $b.BackColor = $hbk })
-    $b.Add_MouseLeave({ $b.ForeColor = $TEXT_DIM; $b.BackColor = $BAR_BG })
+    $b.Add_MouseEnter({ $b.ForeColor = $hf; $b.BackColor = $hbk }.GetNewClosure())
+    $b.Add_MouseLeave({ $b.ForeColor = $TEXT_DIM; $b.BackColor = $BAR_BG }.GetNewClosure())
     $b
 }
 
@@ -143,8 +146,24 @@ $btnLoad.Font = New-Object System.Drawing.Font('Consolas', 8, [System.Drawing.Fo
 $btnLoad.Size = New-Object System.Drawing.Size(60, 30); $btnLoad.Location = New-Object System.Drawing.Point(76, 14)
 $btnLoad.Cursor = 'Hand'; $btnLoad.Add_Click({ Open-SavesPanel })
 
+$btnSync = New-Object System.Windows.Forms.Button
+$btnSync.Text = 'SYNC'; $btnSync.FlatStyle = 'Flat'
+$btnSync.FlatAppearance.BorderSize = 1; $btnSync.FlatAppearance.BorderColor = $TEXT_DIM
+$btnSync.BackColor = $BG; $btnSync.ForeColor = $TEXT_DIM
+$btnSync.Font = New-Object System.Drawing.Font('Consolas', 8, [System.Drawing.FontStyle]::Bold)
+$btnSync.Size = New-Object System.Drawing.Size(60, 30); $btnSync.Location = New-Object System.Drawing.Point(144, 14)
+$btnSync.Cursor = 'Hand'
+
+$btnImport = New-Object System.Windows.Forms.Button
+$btnImport.Text = 'IMPORT'; $btnImport.FlatStyle = 'Flat'
+$btnImport.FlatAppearance.BorderSize = 1; $btnImport.FlatAppearance.BorderColor = $TEXT_DIM
+$btnImport.BackColor = $BG; $btnImport.ForeColor = $TEXT_DIM
+$btnImport.Font = New-Object System.Drawing.Font('Consolas', 8, [System.Drawing.FontStyle]::Bold)
+$btnImport.Size = New-Object System.Drawing.Size(60, 30); $btnImport.Location = New-Object System.Drawing.Point(212, 14)
+$btnImport.Cursor = 'Hand'
+
 # Add label LAST so it renders behind buttons (lower z-order = higher Controls index)
-$titleBar.Controls.AddRange(@($btnMin, $btnClose, $btnSave, $btnLoad))
+$titleBar.Controls.AddRange(@($btnMin, $btnClose, $btnSave, $btnLoad, $btnSync, $btnImport))
 $titleBar.Controls.Add($lblTitle)
 $titleBar.Add_Resize({
     $btnClose.Location = New-Object System.Drawing.Point(($titleBar.Width - 48), 7)
@@ -161,7 +180,7 @@ $form.Controls.Add($accentLine)
 # ── Button bar (docked bottom) ────────────────────────────────────────────────
 $btnBar = New-Object System.Windows.Forms.Panel
 $btnBar.Dock      = 'Bottom'
-$btnBar.Height    = 72
+$btnBar.Height    = 88
 $btnBar.BackColor = $BAR_BG
 $form.Controls.Add($btnBar)
 
@@ -180,28 +199,28 @@ function Make-Btn([string]$text, [System.Drawing.Color]$fg, [int]$w=190, [int]$h
     $b
 }
 
-$btnConfirm   = Make-Btn 'CONFIRM'     $GREEN
-$btnReroll    = Make-Btn 'REROLL'      $AMBER
-$btnEnd       = Make-Btn 'END SESSION' $RED_COL
-$btnSimReport = Make-Btn 'SIM REPORT'  $TEXT_MID 170 44
+$btnConfirm    = Make-Btn 'CONFIRM'     $GREEN
+$btnReroll     = Make-Btn 'REROLL'      $AMBER
+$btnSimReport  = Make-Btn 'SIM REPORT'  $RED_COL 170 44
+$btnUpdateDoc  = Make-Btn 'UPDATE DOC'  $TEXT_MID 150 44
 
-# FRAMEWORK is the primary CTA — white fill, black text (Starlink "Get Started" style)
-$btnFramework = New-Object System.Windows.Forms.Button
-$btnFramework.Text = 'GENERATE'
-$btnFramework.Font = New-Object System.Drawing.Font('Consolas', 10, [System.Drawing.FontStyle]::Bold)
-$btnFramework.FlatStyle = 'Flat'
-$btnFramework.FlatAppearance.BorderSize  = 0
-$btnFramework.BackColor = $TEXT_HI
-$btnFramework.ForeColor = $BG
-$btnFramework.Size      = New-Object System.Drawing.Size(170, 44)
-$btnFramework.Cursor    = 'Hand'
-$btnFramework.Enabled   = $false
+# CHASSIS is the primary CTA — white fill, black text (Starlink "Get Started" style)
+$btnChassis = New-Object System.Windows.Forms.Button
+$btnChassis.Text = 'GENERATE'
+$btnChassis.Font = New-Object System.Drawing.Font('Consolas', 10, [System.Drawing.FontStyle]::Bold)
+$btnChassis.FlatStyle = 'Flat'
+$btnChassis.FlatAppearance.BorderSize  = 0
+$btnChassis.BackColor = $TEXT_HI
+$btnChassis.ForeColor = $BG
+$btnChassis.Size      = New-Object System.Drawing.Size(170, 44)
+$btnChassis.Cursor    = 'Hand'
+$btnChassis.Enabled   = $false
 $btnConfirm.Location   = New-Object System.Drawing.Point( 24, 14)
 $btnReroll.Location    = New-Object System.Drawing.Point(230, 14)
-$btnEnd.Location       = New-Object System.Drawing.Point(436, 14)
-$btnSimReport.Location = New-Object System.Drawing.Point(642, 14)
-$btnFramework.Location = New-Object System.Drawing.Point(828, 14)
-$btnBar.Controls.AddRange(@($btnConfirm, $btnReroll, $btnEnd, $btnSimReport, $btnFramework))
+$btnSimReport.Location = New-Object System.Drawing.Point(436, 14)
+$btnUpdateDoc.Location = New-Object System.Drawing.Point(622, 14)
+$btnChassis.Location   = New-Object System.Drawing.Point(802, 14)
+$btnBar.Controls.AddRange(@($btnConfirm, $btnReroll, $btnSimReport, $btnUpdateDoc, $btnChassis))
 
 $legendL = New-Object System.Windows.Forms.Label
 $legendL.Text      = 'Right-click to edit/delete  |  F11  ESC'
@@ -209,7 +228,7 @@ $legendL.Font      = New-Object System.Drawing.Font('Consolas', 8)
 $legendL.ForeColor = $TEXT_DIM
 $legendL.AutoSize  = $true
 $legendL.Anchor   = [System.Windows.Forms.AnchorStyles]'Right,Top'
-$legendL.Location = New-Object System.Drawing.Point(1060, 28)
+$legendL.Location = New-Object System.Drawing.Point(1180, 64)
 $btnBar.Controls.Add($legendL)
 
 # ── Body (fills between title and button bar) ─────────────────────────────────
@@ -404,7 +423,8 @@ $body.Add_Resize({ Relayout })
 
 # ── Keyboard ──────────────────────────────────────────────────────────────────
 $form.Add_KeyDown({
-    if ($_.KeyCode -eq 'Escape' -or ($_.Alt -and $_.KeyCode -eq 'F4')) { $form.Close() }
+    if ($_.KeyCode -eq 'Escape') { Write-Response "deny"; Set-Buttons-Idle; $form.Close() }
+    elseif ($_.Alt -and $_.KeyCode -eq 'F4') { $form.Close() }
     if ($_.KeyCode -eq 'F11') { Toggle-Fullscreen; $_.SuppressKeyPress = $true }
 })
 
@@ -430,7 +450,7 @@ function Write-Atomic([string]$path, [string]$content) {
 function Write-StateFields([hashtable]$fields) {
     $obj = Read-State; if (-not $obj) { return }
     foreach ($k in $fields.Keys) { $obj.$k = $fields[$k] }
-    Write-Atomic $STATE ($obj | ConvertTo-Json -Compress -Depth 6)
+    Write-Atomic $STATE ($obj | ConvertTo-Json -Compress -Depth 10)
 }
 
 function Write-Response([string]$val) {
@@ -442,20 +462,22 @@ function Save-SimIssues {
     $script:simIssues | ConvertTo-Json -Compress | Set-Content $SIM_ISSUES_F -NoNewline
 }
 
-function Update-FrameworkButton {
-    $btnFramework.Enabled = [bool]($script:sections | Where-Object { $_.features.Count -gt 0 })
+function Update-ChassisButton {
+    $btnChassis.Enabled = [bool]($script:sections | Where-Object { $_.features.Count -gt 0 })
+}
+
+function Update-DocButton {
+    $btnUpdateDoc.Enabled = [bool]($script:sections | Where-Object { $_.features.Count -gt 0 })
 }
 
 function Set-Buttons-Waiting {
     $btnConfirm.Enabled   = $true
     $btnReroll.Enabled    = $true
-    $btnEnd.Enabled       = $true
     $btnSimReport.Enabled = ($script:simType -ne 'waiting_pulse')
 }
 function Set-Buttons-Idle {
     $btnConfirm.Enabled   = $false
     $btnReroll.Enabled    = $false
-    $btnEnd.Enabled       = $false
     $btnSimReport.Enabled = $false
 }
 
@@ -491,7 +513,7 @@ $btnConfirm.Add_Click({
             $fid = [System.Guid]::NewGuid().ToString('N').Substring(0, 8)
             $sec.features.Add(@{ id=$fid; label=$script:currentTitle; desc=$script:currentContent; sectionId=$sec.id; unityConstruct=''; dataFields=@(); dependencies=@() })
         }
-        Save-Features; Rebuild-NodeList; Update-FrameworkButton
+        Save-Features; Rebuild-NodeList; Update-ChassisButton; Update-DocButton
     }
 })
 $btnReroll.Add_Click({
@@ -503,7 +525,6 @@ $btnReroll.Add_Click({
     Start-SimType 'waiting_pulse' @{}
     Set-Buttons-Idle
 })
-$btnEnd.Add_Click({ Write-Response "deny"; Set-Buttons-Idle; $form.Close() })
 $btnSimReport.Add_Click({
     $script:simIssues.Add("sim=$($script:simType) node=$($script:currentNode) title=$($script:currentTitle)")
     Save-SimIssues
@@ -512,14 +533,166 @@ $btnSimReport.Add_Click({
     [System.Windows.Forms.MessageBox]::Show("Sim issue logged.", "ValenTech", 'OK', 'Information') | Out-Null
 })
 
-$btnFramework.Add_Click({
-    $btnFramework.Enabled = $false
-    $btnFramework.Text = 'GENERATING...'
+$btnUpdateDoc.Add_Click({
+    $sfd = New-Object System.Windows.Forms.SaveFileDialog
+    $sfd.Title  = "Save Refined GDD"
+    $sfd.Filter = "Markdown (*.md)|*.md|Text (*.txt)|*.txt|All Files (*.*)|*.*"
+    $gddDir = Join-Path ([Environment]::GetFolderPath('MyDocuments')) "GDDs"
+    $sfd.InitialDirectory = if (Test-Path $gddDir) { $gddDir } else { [Environment]::GetFolderPath('MyDocuments') }
+    $baseName = if ($script:gddFileName) { $script:gddFileName } else { "GDD" }
+    $sfd.FileName = "$baseName - Refined.md"
+    if ($sfd.ShowDialog() -eq 'OK') {
+        $btnUpdateDoc.Enabled = $false
+        $btnUpdateDoc.Text = 'UPDATING...'
+        $form.Refresh()
+        $result = & (Join-Path $ROOT "update_document.ps1") -OutputPath $sfd.FileName
+        $btnUpdateDoc.Text = 'UPDATE DOC'
+        Update-DocButton
+        if ($result -like 'done*') {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Refined GDD saved to:`n$($sfd.FileName)`n`nOpening now...", "ValenTech", 'OK', 'Information') | Out-Null
+            try { Start-Process $sfd.FileName } catch {}
+        } else {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Could not update document.`n$result", "ValenTech", 'OK', 'Warning') | Out-Null
+        }
+    }
+})
 
-    $descBox.Text = "Generating framework...`n`nThis may take a moment."
-    Write-StateFields @{
-        generate_ts  = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        gdd_filename = $script:gddFileName
+$btnChassis.Add_Click({
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = 'Generate Unity Chassis'; $dlg.Size = New-Object System.Drawing.Size(420, 250)
+    $dlg.BackColor = $PANEL_BG; $dlg.ForeColor = $TEXT_HI
+    $dlg.FormBorderStyle = 'FixedToolWindow'; $dlg.StartPosition = 'CenterParent'
+    $dlg.TopMost = $true
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = 'Output format:'
+    $lbl.Font = New-Object System.Drawing.Font('Consolas', 9, [System.Drawing.FontStyle]::Bold)
+    $lbl.ForeColor = $TEXT_MID
+    $lbl.SetBounds(14, 14, 380, 18)
+    $dlg.Controls.Add($lbl)
+
+    $rbScaffold = New-Object System.Windows.Forms.RadioButton
+    $rbScaffold.Text = 'Unity project scaffold (Assets/Scripts/<System>/ + .asmdef)'
+    $rbScaffold.Font = New-Object System.Drawing.Font('Consolas', 9)
+    $rbScaffold.ForeColor = $TEXT_HI
+    $rbScaffold.Checked = $true
+    $rbScaffold.SetBounds(14, 36, 380, 22)
+    $dlg.Controls.Add($rbScaffold)
+
+    $rbFlat = New-Object System.Windows.Forms.RadioButton
+    $rbFlat.Text = 'Flat folder (.cs files only)'
+    $rbFlat.Font = New-Object System.Drawing.Font('Consolas', 9)
+    $rbFlat.ForeColor = $TEXT_HI
+    $rbFlat.SetBounds(14, 60, 380, 22)
+    $dlg.Controls.Add($rbFlat)
+
+    $div = New-Object System.Windows.Forms.Panel
+    $div.BackColor = $DIVIDER
+    $div.SetBounds(14, 92, 380, 1)
+    $dlg.Controls.Add($div)
+
+    $pathLabel = New-Object System.Windows.Forms.Label
+    $pathLabel.Text = 'No folder selected'
+    $pathLabel.Font = New-Object System.Drawing.Font('Consolas', 8)
+    $pathLabel.ForeColor = $TEXT_DIM
+    $pathLabel.AutoEllipsis = $true
+    $pathLabel.SetBounds(14, 104, 380, 18)
+    $dlg.Controls.Add($pathLabel)
+
+    $chooseBtn = New-Object System.Windows.Forms.Button
+    $chooseBtn.Text = 'CHOOSE FOLDER...'
+    $chooseBtn.Font = New-Object System.Drawing.Font('Consolas', 9, [System.Drawing.FontStyle]::Bold)
+    $chooseBtn.FlatStyle = 'Flat'
+    $chooseBtn.FlatAppearance.BorderSize  = 1
+    $chooseBtn.FlatAppearance.BorderColor = $TEXT_MID
+    $chooseBtn.BackColor = $BG
+    $chooseBtn.ForeColor = $TEXT_HI
+    $chooseBtn.Cursor    = 'Hand'
+    $chooseBtn.SetBounds(14, 128, 150, 30)
+    $dlg.Controls.Add($chooseBtn)
+
+    $script:chassisFolder = ''
+    $chooseBtn.Add_Click({
+        $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
+        $fbd.Description = "Select the output folder for the generated chassis"
+        if ($fbd.ShowDialog() -eq 'OK') {
+            $script:chassisFolder = $fbd.SelectedPath
+            $pathLabel.Text = $script:chassisFolder
+            $pathLabel.ForeColor = $TEXT_MID
+        }
+    })
+
+    $okBtn = New-Object System.Windows.Forms.Button
+    $okBtn.Text = 'GENERATE'
+    $okBtn.Font = New-Object System.Drawing.Font('Consolas', 10, [System.Drawing.FontStyle]::Bold)
+    $okBtn.FlatStyle = 'Flat'
+    $okBtn.FlatAppearance.BorderSize = 0
+    $okBtn.BackColor = $TEXT_HI
+    $okBtn.ForeColor = $BG
+    $okBtn.Cursor    = 'Hand'
+    $okBtn.SetBounds(14, 174, 150, 36)
+    $okBtn.DialogResult = 'OK'
+    $dlg.Controls.Add($okBtn)
+
+    $cancelBtn = New-Object System.Windows.Forms.Button
+    $cancelBtn.Text = 'CANCEL'
+    $cancelBtn.Font = New-Object System.Drawing.Font('Consolas', 10, [System.Drawing.FontStyle]::Bold)
+    $cancelBtn.FlatStyle = 'Flat'
+    $cancelBtn.FlatAppearance.BorderSize  = 1
+    $cancelBtn.FlatAppearance.BorderColor = $TEXT_MID
+    $cancelBtn.BackColor = $BG
+    $cancelBtn.ForeColor = $TEXT_MID
+    $cancelBtn.Cursor    = 'Hand'
+    $cancelBtn.SetBounds(180, 174, 110, 36)
+    $cancelBtn.DialogResult = 'Cancel'
+    $dlg.Controls.Add($cancelBtn)
+
+    $dlg.AcceptButton = $okBtn
+    $dlg.CancelButton = $cancelBtn
+
+    $result = $dlg.ShowDialog()
+    if ($result -eq 'OK' -and $script:chassisFolder) {
+        $format = if ($rbFlat.Checked) { 'flat' } else { 'scaffold' }
+        $btnChassis.Enabled = $false
+        $btnChassis.Text = 'GENERATING...'
+        $descBox.Text = "Generating Unity chassis ($format)...`n`nThis may take a moment."
+        $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $script:pendingGenerateTs = $ts
+        Write-StateFields @{
+            generate_ts         = $ts
+            chassis_format      = $format
+            chassis_output_path = $script:chassisFolder
+            chassis_path        = ''
+        }
+    } elseif ($result -eq 'OK' -and -not $script:chassisFolder) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "No output folder was selected - nothing was generated.`n`nClick GENERATE again and choose a folder first.",
+            "ValenTech", 'OK', 'Warning') | Out-Null
+    }
+    $dlg.Dispose()
+})
+
+$btnSync.Add_Click({
+    $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
+    $fbd.Description = "Select the Unity project folder to sync against your spec"
+    if ($fbd.ShowDialog() -eq 'OK') {
+        $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Write-StateFields @{ sync_path = $fbd.SelectedPath; sync_ts = $ts; sync_diff_ts = 0 }
+        $descBox.ForeColor = $TEXT_MID
+        $descBox.Text = "Sync requested.`n`nClaude is scanning the Unity project for differences..."
+    }
+})
+
+$btnImport.Add_Click({
+    $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
+    $fbd.Description = "Select the Unity project folder to reconstruct spec from"
+    if ($fbd.ShowDialog() -eq 'OK') {
+        $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Write-StateFields @{ reimport_path = $fbd.SelectedPath; reimport_ts = $ts; reimport_data_ts = 0 }
+        $descBox.ForeColor = $TEXT_MID
+        $descBox.Text = "Import requested.`n`nClaude is reconstructing your spec from the Unity project..."
     }
 })
 
@@ -615,6 +788,254 @@ function Get-CategoryColor([string]$category) {
     }
 }
 
+# ── Sync diff modal ───────────────────────────────────────────────────────────
+function Show-SyncDiffModal($diffObj, [string]$syncedPath) {
+    $changes = @($diffObj.changes)
+    if (-not $changes -or $changes.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "No differences found - your spec matches the Unity project.",
+            "ValenTech SYNC", 'OK', 'Information') | Out-Null
+        return
+    }
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = 'SYNC - UNITY DIFF'
+    $dlg.Size = New-Object System.Drawing.Size(660, 540)
+    $dlg.BackColor = $PANEL_BG; $dlg.ForeColor = $TEXT_HI
+    $dlg.FormBorderStyle = 'FixedDialog'; $dlg.StartPosition = 'CenterParent'
+    $dlg.MaximizeBox = $false; $dlg.MinimizeBox = $false; $dlg.TopMost = $true
+
+    $pathL = New-Object System.Windows.Forms.Label
+    $pathL.Text = if ($syncedPath) { [System.IO.Path]::GetFileName($syncedPath) } else { 'Unknown path' }
+    $pathL.Font = New-Object System.Drawing.Font('Consolas', 8)
+    $pathL.ForeColor = $TEXT_DIM; $pathL.AutoEllipsis = $true
+    $pathL.SetBounds(10, 10, 500, 18); $dlg.Controls.Add($pathL)
+
+    $countL = New-Object System.Windows.Forms.Label
+    $countL.Text = "$($changes.Count) change$(if ($changes.Count -ne 1) { 's' })"
+    $countL.Font = New-Object System.Drawing.Font('Consolas', 9, [System.Drawing.FontStyle]::Bold)
+    $countL.ForeColor = $AMBER; $countL.SetBounds(530, 8, 110, 20); $dlg.Controls.Add($countL)
+
+    $instrL = New-Object System.Windows.Forms.Label
+    $instrL.Text = 'Check items to accept into your spec, then click APPLY.'
+    $instrL.Font = New-Object System.Drawing.Font('Consolas', 8)
+    $instrL.ForeColor = $TEXT_MID; $instrL.SetBounds(10, 30, 630, 16); $dlg.Controls.Add($instrL)
+
+    $div1 = New-Object System.Windows.Forms.Panel
+    $div1.SetBounds(10, 50, 622, 1); $div1.BackColor = $DIVIDER; $dlg.Controls.Add($div1)
+
+    $listPanel = New-Object System.Windows.Forms.Panel
+    $listPanel.BackColor = $CARD_BG; $listPanel.AutoScroll = $true
+    $listPanel.SetBounds(10, 56, 622, 260); $dlg.Controls.Add($listPanel)
+
+    $detailPanel = New-Object System.Windows.Forms.Panel
+    $detailPanel.BackColor = [System.Drawing.Color]::FromArgb(18, 18, 18)
+    $detailPanel.SetBounds(10, 322, 622, 110); $dlg.Controls.Add($detailPanel)
+
+    $detailL = New-Object System.Windows.Forms.Label
+    $detailL.Text = 'Click a row to see details.'
+    $detailL.Font = New-Object System.Drawing.Font('Consolas', 8)
+    $detailL.ForeColor = $TEXT_DIM; $detailL.AutoSize = $false
+    $detailL.SetBounds(8, 4, 606, 102); $detailPanel.Controls.Add($detailL)
+
+    $div2 = New-Object System.Windows.Forms.Panel
+    $div2.SetBounds(10, 438, 622, 1); $div2.BackColor = $DIVIDER; $dlg.Controls.Add($div2)
+
+    $applyBtn = New-Object System.Windows.Forms.Button
+    $applyBtn.Text = 'APPLY SELECTED'
+    $applyBtn.Font = New-Object System.Drawing.Font('Consolas', 9, [System.Drawing.FontStyle]::Bold)
+    $applyBtn.FlatStyle = 'Flat'; $applyBtn.FlatAppearance.BorderSize = 0
+    $applyBtn.BackColor = $TEXT_HI; $applyBtn.ForeColor = $BG; $applyBtn.Cursor = 'Hand'
+    $applyBtn.SetBounds(10, 448, 160, 34); $applyBtn.DialogResult = 'OK'; $dlg.Controls.Add($applyBtn)
+
+    $cancelBtn = New-Object System.Windows.Forms.Button
+    $cancelBtn.Text = 'CANCEL'
+    $cancelBtn.Font = New-Object System.Drawing.Font('Consolas', 9, [System.Drawing.FontStyle]::Bold)
+    $cancelBtn.FlatStyle = 'Flat'; $cancelBtn.FlatAppearance.BorderSize = 1
+    $cancelBtn.FlatAppearance.BorderColor = $TEXT_MID
+    $cancelBtn.BackColor = $BG; $cancelBtn.ForeColor = $TEXT_MID; $cancelBtn.Cursor = 'Hand'
+    $cancelBtn.SetBounds(188, 448, 100, 34); $cancelBtn.DialogResult = 'Cancel'; $dlg.Controls.Add($cancelBtn)
+    $dlg.AcceptButton = $applyBtn; $dlg.CancelButton = $cancelBtn
+
+    $cy = 4
+    foreach ($ch in $changes) {
+        $sc = [string]$ch.status
+        $statusColor = switch ($sc) {
+            'new_in_unity'      { $GREEN }
+            'fields_changed'    { $AMBER }
+            'construct_changed' { $AMBER }
+            'missing_in_unity'  { $RED_COL }
+            default             { $TEXT_MID }
+        }
+        $statusIcon = switch ($sc) {
+            'new_in_unity'      { '+' }
+            'fields_changed'    { '~' }
+            'construct_changed' { '!' }
+            'missing_in_unity'  { '-' }
+            default             { '?' }
+        }
+        $statusText = switch ($sc) {
+            'new_in_unity'      { 'new in Unity' }
+            'fields_changed'    { 'fields changed' }
+            'construct_changed' { 'construct changed' }
+            'missing_in_unity'  { 'missing in Unity' }
+            default             { $sc }
+        }
+
+        $cb = New-Object System.Windows.Forms.CheckBox
+        $cb.Tag = $ch; $cb.Checked = ($sc -ne 'missing_in_unity')
+        $cb.SetBounds(4, ($cy + 2), 18, 18); $listPanel.Controls.Add($cb)
+
+        $iconL = New-Object System.Windows.Forms.Label
+        $iconL.Text = $statusIcon
+        $iconL.Font = New-Object System.Drawing.Font('Consolas', 9, [System.Drawing.FontStyle]::Bold)
+        $iconL.ForeColor = $statusColor; $iconL.SetBounds(26, ($cy + 1), 16, 20); $listPanel.Controls.Add($iconL)
+
+        $rowL = New-Object System.Windows.Forms.Label
+        $rowL.Text = "$([string]$ch.system)  /  $([string]$ch.className)"
+        $rowL.Font = New-Object System.Drawing.Font('Consolas', 9)
+        $rowL.ForeColor = $TEXT_HI; $rowL.SetBounds(46, ($cy + 1), 380, 20)
+        $rowL.Cursor = 'Hand'; $listPanel.Controls.Add($rowL)
+
+        $statL = New-Object System.Windows.Forms.Label
+        $statL.Text = $statusText
+        $statL.Font = New-Object System.Drawing.Font('Consolas', 8)
+        $statL.ForeColor = $statusColor; $statL.SetBounds(440, ($cy + 3), 170, 16); $listPanel.Controls.Add($statL)
+
+        $detail = [string]$ch.detail
+        $rowL.Add_Click({ $detailL.Text = $detail }.GetNewClosure())
+        $statL.Add_Click({ $detailL.Text = $detail }.GetNewClosure())
+        $iconL.Add_Click({ $detailL.Text = $detail }.GetNewClosure())
+
+        $cy += 28
+    }
+
+    if ($dlg.ShowDialog() -eq 'OK') {
+        $accepted = @($listPanel.Controls | Where-Object { $_ -is [System.Windows.Forms.CheckBox] -and $_.Checked })
+        if ($accepted.Count -gt 0) {
+            foreach ($accCb in $accepted) {
+                $ch      = $accCb.Tag
+                $sysName = [string]$ch.system
+                $clsName = [string]$ch.className
+                $sc      = [string]$ch.status
+                $sec     = $script:sections | Where-Object { $_.label -eq $sysName } | Select-Object -First 1
+
+                if ($sc -eq 'new_in_unity') {
+                    if (-not $sec) {
+                        $sec = @{
+                            id       = [System.Guid]::NewGuid().ToString('N').Substring(0, 8)
+                            label    = $sysName
+                            category = 'default'
+                            excerpt  = ''
+                            features = [System.Collections.Generic.List[hashtable]]::new()
+                        }
+                        $script:sections.Add($sec)
+                    }
+                    $fid    = [System.Guid]::NewGuid().ToString('N').Substring(0, 8)
+                    $newCon = if ($ch.scanned -and $ch.scanned.construct) { [string]$ch.scanned.construct } else { '' }
+                    $newFlds = if ($ch.scanned -and $ch.scanned.fields) {
+                        [System.Collections.ArrayList]@($ch.scanned.fields | ForEach-Object { @{ name = [string]$_.name; type = [string]$_.type } })
+                    } else { [System.Collections.ArrayList]@() }
+                    $sec.features.Add(@{
+                        id             = $fid
+                        label          = "$clsName - imported from Unity"
+                        desc           = "Imported via sync."
+                        sectionId      = $sec.id
+                        unityConstruct = $newCon
+                        dataFields     = $newFlds
+                        dependencies   = [System.Collections.ArrayList]@()
+                    })
+                } elseif (($sc -eq 'fields_changed' -or $sc -eq 'construct_changed') -and $sec) {
+                    $feat = $sec.features | Where-Object { [string]$_.label -match "^$([regex]::Escape($clsName))\b" } | Select-Object -First 1
+                    if ($feat -and $ch.scanned) {
+                        if ($ch.scanned.fields) {
+                            $feat.dataFields = [System.Collections.ArrayList]@($ch.scanned.fields | ForEach-Object { @{ name = [string]$_.name; type = [string]$_.type } })
+                        }
+                        if ($ch.scanned.construct) { $feat.unityConstruct = [string]$ch.scanned.construct }
+                    }
+                } elseif ($sc -eq 'missing_in_unity' -and $sec) {
+                    $toRemove = $sec.features | Where-Object { [string]$_.label -match "^$([regex]::Escape($clsName))\b" } | Select-Object -First 1
+                    if ($toRemove) { [void]$sec.features.Remove($toRemove) }
+                }
+            }
+            Save-Features; Rebuild-NodeList; Update-ChassisButton; Update-DocButton
+            [System.Windows.Forms.MessageBox]::Show(
+                "Sync applied: $($accepted.Count) change$(if ($accepted.Count -ne 1) { 's' }) merged.",
+                "ValenTech SYNC", 'OK', 'Information') | Out-Null
+        }
+    }
+    $dlg.Dispose()
+}
+
+# ── Re-import confirmation ─────────────────────────────────────────────────────
+function Show-ReimportConfirm($reimportObj) {
+    $sysCnt  = 0
+    $featCnt = 0
+    if ($reimportObj.features) {
+        $reimportObj.features.PSObject.Properties | ForEach-Object {
+            $sysCnt++; $featCnt += @($_.Value).Count
+        }
+    }
+
+    $answer = [System.Windows.Forms.MessageBox]::Show(
+        "Import found $sysCnt system$(if ($sysCnt -ne 1) { 's' }) with $featCnt feature$(if ($featCnt -ne 1) { 's' }).`n`nThis replaces all features in your current spec.`n`nContinue?",
+        "ValenTech IMPORT", [System.Windows.Forms.MessageBoxButtons]::YesNo, 'Warning')
+    if ($answer -ne 'Yes') { return }
+
+    $existingMap = @{}
+    foreach ($sec in $script:sections) { $existingMap[$sec.label] = $sec; $sec.features.Clear() }
+
+    if ($reimportObj.features) {
+        foreach ($prop in $reimportObj.features.PSObject.Properties) {
+            $sysName = $prop.Name
+            $sec = if ($existingMap.ContainsKey($sysName)) { $existingMap[$sysName] } else {
+                $newSec = @{
+                    id       = [System.Guid]::NewGuid().ToString('N').Substring(0, 8)
+                    label    = $sysName
+                    category = 'default'
+                    excerpt  = ''
+                    features = [System.Collections.Generic.List[hashtable]]::new()
+                }
+                $script:sections.Add($newSec); $newSec
+            }
+            foreach ($f in @($prop.Value)) {
+                $fid = [System.Guid]::NewGuid().ToString('N').Substring(0, 8)
+                $sec.features.Add(@{
+                    id             = $fid
+                    label          = [string]$f.title
+                    desc           = [string]$f.desc
+                    sectionId      = $sec.id
+                    unityConstruct = [string]$f.unityConstruct
+                    dataFields     = [System.Collections.ArrayList]@(if ($f.dataFields) { @($f.dataFields) | ForEach-Object { @{ name = [string]$_.name; type = [string]$_.type } } } else { @() })
+                    dependencies   = [System.Collections.ArrayList]@(if ($f.dependencies) { @($f.dependencies) | ForEach-Object { [string]$_ } } else { @() })
+                })
+            }
+        }
+    }
+
+    Save-Features; Rebuild-NodeList; Update-ChassisButton; Update-DocButton
+    [System.Windows.Forms.MessageBox]::Show(
+        "Spec imported: $sysCnt system$(if ($sysCnt -ne 1) { 's' }), $featCnt feature$(if ($featCnt -ne 1) { 's' }).",
+        "ValenTech IMPORT", 'OK', 'Information') | Out-Null
+
+    $exportQ = [System.Windows.Forms.MessageBox]::Show(
+        "Generate a GDD document from the imported spec?",
+        "ValenTech IMPORT", [System.Windows.Forms.MessageBoxButtons]::YesNo, 'Question')
+    if ($exportQ -ne 'Yes') { return }
+
+    $sfd = New-Object System.Windows.Forms.SaveFileDialog
+    $sfd.Title = "Save GDD Document"
+    $sfd.Filter = "Markdown (*.md)|*.md|Text (*.txt)|*.txt|All Files (*.*)|*.*"
+    $sfd.FileName = "Imported_GDD.md"
+    $sfd.InitialDirectory = [Environment]::GetFolderPath('MyDocuments')
+    if ($sfd.ShowDialog() -eq 'OK') {
+        $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Write-StateFields @{ gdd_export_path = $sfd.FileName; gdd_export_ts = $ts }
+        $descBox.ForeColor = $TEXT_MID
+        $descBox.Text = "GDD export requested.`n`nClaude is writing your GDD document..."
+    }
+}
+
 $script:sections = [System.Collections.Generic.List[hashtable]]::new()
 
 # ── Feature persistence ───────────────────────────────────────────────────────
@@ -627,15 +1048,21 @@ function Save-Features {
                     title          = $_.label
                     desc           = [string]$_.desc
                     unityConstruct = if ($_.unityConstruct) { [string]$_.unityConstruct } else { '' }
-                    dataFields     = if ($_.dataFields)     { $_.dataFields }             else { @() }
-                    dependencies   = if ($_.dependencies)   { $_.dependencies }           else { @() }
+                    # FIX (single-element-array collapse): ConvertTo-Json collapses a
+                    # 1-element Object[] nested two levels deep (hashtable inside this
+                    # array inside $obj) to a bare scalar, and an empty Object[] to
+                    # {}, producing e.g. "dependencies":"Player Marketplace" or
+                    # "dataFields":{} instead of ["Player Marketplace"]/[] in
+                    # features.json. ArrayList is exempt from both collapses.
+                    dataFields     = [System.Collections.ArrayList]@(if ($_.dataFields)   { $_.dataFields }   else { @() })
+                    dependencies   = [System.Collections.ArrayList]@(if ($_.dependencies) { $_.dependencies } else { @() })
                 }
             })
         }
     }
     $json = ConvertTo-Json $obj -Depth 6 -Compress
     # FIX (consistency): features.json is read externally by Claude when generating
-    # the framework (CLAUDE.md's GENERATE_FRAMEWORK step). Use the same atomic
+    # the chassis (CLAUDE.md's GENERATE_CHASSIS step). Use the same atomic
     # tmp+Move-Item pattern as state.json (Write-Atomic, window.ps1:419) instead of
     # a plain truncate-then-write Set-Content, so an external read can never observe
     # a partially-written file.
@@ -673,8 +1100,10 @@ function Save-Project {
                     title          = $_.label
                     desc           = $_.desc
                     unityConstruct = if ($_.unityConstruct) { [string]$_.unityConstruct } else { '' }
-                    dataFields     = if ($_.dataFields)     { $_.dataFields }             else { @() }
-                    dependencies   = if ($_.dependencies)   { $_.dependencies }           else { @() }
+                    # FIX (same single-element/empty array collapse as Save-Features) —
+                    # keep saves/*.json's dataFields/dependencies as proper JSON arrays.
+                    dataFields     = [System.Collections.ArrayList]@(if ($_.dataFields)   { $_.dataFields }   else { @() })
+                    dependencies   = [System.Collections.ArrayList]@(if ($_.dependencies) { $_.dependencies } else { @() })
                 }
             }) }
         })
@@ -764,16 +1193,23 @@ function Open-SavesPanel {
         }
         Save-Features
         Rebuild-NodeList
-        Update-FrameworkButton
+        Update-ChassisButton
+        Update-DocButton
         $propTitleL.Text = ''; $propDescL.Text = ''
         $checkPanel.Controls.Clear(); $script:checkboxes.Clear()
         $script:currentTitle = ''; $script:currentContent = ''
         $script:nodeSelectedAt = [datetime]::MinValue
+        # FIX (consistency): Parse-GDD resets the canvas to 'waiting_pulse' when
+        # switching GDDs (window.ps1:907) — loading a saved project is the same
+        # kind of context switch but was missing this, so the previous project's
+        # last sim (e.g. creature_chase, gene_pool) kept animating behind the
+        # freshly-cleared "Select a concept node to continue" proposal panel.
+        Start-SimType 'waiting_pulse' @{}
         Set-Buttons-Idle
         $nodesArr = @($script:sections | ForEach-Object {
             @{ id=$_.id; label=$_.label; type='system'; confirmed=$false; sectionId=$_.id }
         })
-        Write-StateFields @{ title = ''; content = ''; response = ''; nodes = $nodesArr }
+        Write-StateFields @{ title = ''; content = ''; response = ''; gdd_raw = ''; nodes = $nodesArr }
         $descBox.Text = "Loaded: $($data.projectName)`n`nSelect a concept node to continue."
     } catch {
         [System.Windows.Forms.MessageBox]::Show("Could not load save.`n$_", "ValenTech") | Out-Null
@@ -856,7 +1292,23 @@ function Parse-GDD([string]$raw) {
         }
         $excerpt = (($parts -join ' ') -replace '\s+', ' ').Trim()
         if ($excerpt.Length -gt 600) { $excerpt = $excerpt.Substring(0, 600) }
-        $headings[$hi].excerpt = $excerpt
+        $headings[$hi].excerpt   = $excerpt
+        # True (uncapped) section bounds, used by update_document.ps1 to splice
+        # confirmed-implementation notes back into gdd_raw at the right spot.
+        $headings[$hi].lineStart = $headings[$hi].idx
+        $headings[$hi].lineEnd   = if ($hi + 1 -lt $headings.Count) { $headings[$hi+1].idx } else { $lines.Count }
+    }
+
+    # FIX (empty gdd_section for divider headings): a heading immediately
+    # followed by its first sub-heading (e.g. "7. Online -- Trading & Co-op"
+    # directly followed by "7.1 Player Marketplace") has zero body lines of its
+    # own, so $excerpt above comes out empty -- Claude then gets gdd_section=""
+    # for that node and has nothing to tailor a proposal from. Walk backwards so
+    # a chain of empty headings each borrow from the next (already-fixed) one.
+    for ($hi = $headings.Count - 2; $hi -ge 0; $hi--) {
+        if (-not $headings[$hi].excerpt) {
+            $headings[$hi].excerpt = $headings[$hi+1].excerpt
+        }
     }
 
     # Phase 3 — build section objects with category colors and GDD excerpt
@@ -871,6 +1323,8 @@ function Parse-GDD([string]$raw) {
             category  = $cat
             features  = [System.Collections.Generic.List[hashtable]]::new()
             collapsed = $false
+            lineStart = $h.lineStart
+            lineEnd   = $h.lineEnd
         })
     }
 
@@ -881,10 +1335,11 @@ function Parse-GDD([string]$raw) {
     foreach ($s in $sorted) { $script:sections.Add($s) }
 
     Rebuild-NodeList
-    Update-FrameworkButton
+    Update-ChassisButton
+    Update-DocButton
 
     $nodesArr = @($script:sections | ForEach-Object {
-        @{ id=$_.id; label=$_.label; type='system'; confirmed=$false; sectionId=$_.id }
+        @{ id=$_.id; label=$_.label; type='system'; confirmed=$false; sectionId=$_.id; lineStart=$_.lineStart; lineEnd=$_.lineEnd }
     })
     Write-StateFields @{ nodes = $nodesArr }
 }
@@ -1025,6 +1480,14 @@ function Rebuild-NodeList {
                     $d.sec.features.Remove($d.feat) | Out-Null
                     Save-Features
                     Rebuild-NodeList
+                    # FIX (stale enabled-state): Update-ChassisButton re-evaluates
+                    # "does any section have features" — called after Confirm (window.ps1:493),
+                    # Load (:872), and Parse (:995), all of which can make this true. Delete
+                    # is the inverse mutation (can make it false, e.g. deleting the very last
+                    # confirmed feature) and was the only path that skipped it, leaving
+                    # GENERATE clickable with an empty features.json.
+                    Update-ChassisButton
+                    Update-DocButton
                 })
 
                 $cms.Items.Add($editItem)  | Out-Null
@@ -1225,58 +1688,6 @@ function Draw-Sim {
             $lb.Dispose()
         }
 
-        'economy_flow' {
-            $p      = $script:simParams
-            $srcs   = if ($p.sources) { $p.sources } else { @("QUEST","LOOT","CRAFT") }
-            $snks   = if ($p.sinks)   { $p.sinks }   else { @("UPGRADE","BUILD","TRADE") }
-            $col    = if ($p.color)   { try { [System.Drawing.ColorTranslator]::FromHtml($p.color) } catch { $AMBER } } else { $AMBER }
-            $srcX   = [int]($cw*0.2); $snkX=[int]($cw*0.8)
-            $bW=70; $bH=26; $pulseT=($t*0.5)%1.0
-
-            $sb  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(30,0,200,255))
-            $sp  = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(180,0,200,255),1)
-            $sbr = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,0,200,255))
-            $lp  = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(40,0,200,255),1)
-            $pbr = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,0,255,200))
-            for ($si=0;$si-lt $srcs.Count;$si++) {
-                $sy=[int]($cy-($srcs.Count-1)*30+$si*60)
-                $g.FillRectangle($sb,($srcX-$bW/2),($sy-$bH/2),$bW,$bH)
-                $g.DrawRectangle($sp,($srcX-$bW/2),($sy-$bH/2),$bW,$bH)
-                $ssz=$g.MeasureString($srcs[$si],$script:fnt7B)
-                $g.DrawString($srcs[$si],$script:fnt7B,$sbr,($srcX-$ssz.Width/2),($sy-$ssz.Height/2))
-                $g.DrawLine($lp,($srcX+$bW/2),$sy,$cx,$cy)
-                $px2=[int](($srcX+$bW/2)+($cx-$srcX-$bW/2)*$pulseT)
-                $py2=[int]($sy+($cy-$sy)*$pulseT)
-                $g.FillEllipse($pbr,($px2-4),($py2-4),8,8)
-            }
-            $sb.Dispose();$sp.Dispose();$sbr.Dispose();$lp.Dispose();$pbr.Dispose()
-
-            $hb=New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(40,$col.R,$col.G,$col.B))
-            $g.FillEllipse($hb,($cx-22),($cy-22),44,44); $hb.Dispose()
-            $hp=New-Object System.Drawing.Pen($col,2)
-            $g.DrawEllipse($hp,($cx-22),($cy-22),44,44); $hp.Dispose()
-            $hbr = New-Object System.Drawing.SolidBrush($col)
-            $g.DrawString("HUB",$script:fnt7B,$hbr,($cx-14),($cy-7)); $hbr.Dispose()
-
-            $kb   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(30,180,0,255))
-            $kp   = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(180,180,0,255),1)
-            $kbr  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,180,0,255))
-            $lp2  = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(40,180,0,255),1)
-            $pbr3 = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,255,180,0))
-            for ($ki=0;$ki-lt $snks.Count;$ki++) {
-                $ky=[int]($cy-($snks.Count-1)*30+$ki*60)
-                $g.FillRectangle($kb,($snkX-$bW/2),($ky-$bH/2),$bW,$bH)
-                $g.DrawRectangle($kp,($snkX-$bW/2),($ky-$bH/2),$bW,$bH)
-                $ksz=$g.MeasureString($snks[$ki],$script:fnt7B)
-                $g.DrawString($snks[$ki],$script:fnt7B,$kbr,($snkX-$ksz.Width/2),($ky-$ksz.Height/2))
-                $g.DrawLine($lp2,$cx,$cy,($snkX-$bW/2),$ky)
-                $px3=[int]($cx+($snkX-$bW/2-$cx)*$pulseT)
-                $py3=[int]($cy+($ky-$cy)*$pulseT)
-                $g.FillEllipse($pbr3,($px3-4),($py3-4),8,8)
-            }
-            $kb.Dispose();$kp.Dispose();$kbr.Dispose();$lp2.Dispose();$pbr3.Dispose()
-        }
-
         'feature_tree' {
             $p        = $script:simParams
             $rootLbl  = if ($p.root)     { $p.root }     else { "CORE" }
@@ -1311,88 +1722,6 @@ function Draw-Sim {
                     $g.DrawString($clbl,$script:fnt7,$cbr,($chx-$csz.Width/2),($childY-$csz.Height/2))
                     $cbr.Dispose()
                 }
-            }
-        }
-
-        'dna_helix' {
-            # Double helix — genetics, breeding, biology
-            $p    = $script:simParams
-            $spd  = if ($p.speed)  { [double]$p.speed  } else { 0.8 }
-            $col1 = if ($p.color1) { try { [System.Drawing.ColorTranslator]::FromHtml($p.color1) } catch { $MECH_COL } } else { $MECH_COL }
-            $col2 = if ($p.color2) { try { [System.Drawing.ColorTranslator]::FromHtml($p.color2) } catch { $LOOP_COL } } else { $LOOP_COL }
-            $helixR = [int]([Math]::Min($cw,$ch) * 0.11)
-            $helixH = [int]($ch * 0.72)
-            $sy2    = [int](($ch - $helixH) / 2)
-            $steps2 = 80
-            $pts1 = [System.Collections.Generic.List[System.Drawing.Point]]::new()
-            $pts2 = [System.Collections.Generic.List[System.Drawing.Point]]::new()
-            for ($si = 0; $si -le $steps2; $si++) {
-                $prog2 = $si / $steps2
-                $y2    = $sy2 + [int]($prog2 * $helixH)
-                $ph2   = $prog2 * [Math]::PI * 3 + $t * $spd
-                $pts1.Add([System.Drawing.Point]::new($cx + [int]($helixR * [Math]::Sin($ph2)),                    $y2))
-                $pts2.Add([System.Drawing.Point]::new($cx + [int]($helixR * [Math]::Sin($ph2 + [Math]::PI)), $y2))
-            }
-            $pen1 = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(200,$col1.R,$col1.G,$col1.B),2)
-            $pen2 = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(200,$col2.R,$col2.G,$col2.B),2)
-            $g.DrawLines($pen1,$pts1.ToArray()); $g.DrawLines($pen2,$pts2.ToArray())
-            $pen1.Dispose(); $pen2.Dispose()
-            $numRungs2 = 10
-            for ($ri = 0; $ri -le $numRungs2; $ri++) {
-                $prog2 = $ri / $numRungs2
-                $y2    = $sy2 + [int]($prog2 * $helixH)
-                $ph2   = $prog2 * [Math]::PI * 3 + $t * $spd
-                $rx1   = $cx + [int]($helixR * [Math]::Sin($ph2))
-                $rx2   = $cx + [int]($helixR * [Math]::Sin($ph2 + [Math]::PI))
-                $depth = [Math]::Sin($ph2)
-                $ralpha= [int](80 + 80 * (($depth + 1) / 2))
-                $rp2   = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb($ralpha,150,150,150),1)
-                $g.DrawLine($rp2,$rx1,$y2,$rx2,$y2); $rp2.Dispose()
-                $nr2   = if ($depth -gt 0) { 6 } else { 4 }
-                $rb1   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($ralpha+55,$col1.R,$col1.G,$col1.B))
-                $rb2   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($ralpha+55,$col2.R,$col2.G,$col2.B))
-                $g.FillEllipse($rb1,($rx1-$nr2),($y2-$nr2),$nr2*2,$nr2*2)
-                $g.FillEllipse($rb2,($rx2-$nr2),($y2-$nr2),$nr2*2,$nr2*2)
-                $rb1.Dispose(); $rb2.Dispose()
-            }
-        }
-
-        'particle_swarm' {
-            # Particle swarm — catching, creature AI, movement, exploration
-            $p     = $script:simParams
-            $mode  = if ($p.mode)  { $p.mode  } else { 'orbit' }
-            $cnt   = if ($p.count) { [int]$p.count } else { 18 }
-            $col   = if ($p.color) { try { [System.Drawing.ColorTranslator]::FromHtml($p.color) } catch { $LOOP_COL } } else { $LOOP_COL }
-            $baseR = [int]([Math]::Min($cw,$ch) * 0.26)
-            $cb2   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200,$col.R,$col.G,$col.B))
-            $g.FillEllipse($cb2,($cx-5),($cy-5),10,10); $cb2.Dispose()
-            $cp2   = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(60,$col.R,$col.G,$col.B),1)
-            $g.DrawEllipse($cp2,($cx-$baseR),($cy-$baseR),$baseR*2,$baseR*2); $cp2.Dispose()
-            for ($pi = 0; $pi -lt $cnt; $pi++) {
-                $base2 = 2 * [Math]::PI * $pi / $cnt
-                $freq2 = 0.25 + ($pi % 5) * 0.08
-                switch ($mode) {
-                    'flee' {
-                        $r3   = $baseR * (0.5 + [Math]::Abs([Math]::Sin($t * $freq2 + $base2 * 1.3)) * 0.7)
-                        $ang3 = $base2 + [Math]::Sin($t * $freq2 * 0.4) * 0.6
-                    }
-                    'seek' {
-                        $r3   = $baseR * (0.15 + [Math]::Abs([Math]::Sin($t * $freq2 * 1.2 + $base2)) * 0.5)
-                        $ang3 = $base2 + $t * 0.25
-                    }
-                    default {
-                        $r3   = $baseR * (0.7 + [Math]::Sin($t * $freq2 + $base2) * 0.3)
-                        $ang3 = $base2 + $t * (0.15 + $freq2 * 0.1)
-                    }
-                }
-                $ppx = $cx + [int]($r3 * [Math]::Cos($ang3))
-                $ppy = $cy + [int]($r3 * [Math]::Sin($ang3))
-                $palpha = [int](40 + 30 * [Math]::Abs([Math]::Sin($t * $freq2 + $base2)))
-                $plp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb($palpha,$col.R,$col.G,$col.B),1)
-                $g.DrawLine($plp,$cx,$cy,$ppx,$ppy); $plp.Dispose()
-                $pra = [int](130 + 100 * [Math]::Abs([Math]::Sin($t * $freq2 + $base2)))
-                $ppb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($pra,$col.R,$col.G,$col.B))
-                $g.FillEllipse($ppb,($ppx-4),($ppy-4),8,8); $ppb.Dispose()
             }
         }
 
@@ -1444,87 +1773,6 @@ function Draw-Sim {
             }
         }
 
-        'network' {
-            # Node network — relationships, social, trading, bonds
-            $p    = $script:simParams
-            $lbls = if ($p.labels) { $p.labels } else { @("PLAYER","NPC","GUILD","MARKET","RIVAL") }
-            $col  = if ($p.color)  { try { [System.Drawing.ColorTranslator]::FromHtml($p.color) } catch { $SYS_COL } } else { $SYS_COL }
-            $nn   = [Math]::Min($lbls.Count, 7)
-            $nrad = [int]([Math]::Min($cw,$ch) * 0.27)
-            $netPts = [System.Drawing.Point[]]($nn)
-            $netPts[0] = [System.Drawing.Point]::new($cx,$cy)
-            for ($ni = 1; $ni -lt $nn; $ni++) {
-                $nang = 2*[Math]::PI*($ni-1)/([Math]::Max($nn-1,1)) - [Math]::PI/2
-                $netPts[$ni] = [System.Drawing.Point]::new(
-                    [int]($cx + $nrad * [Math]::Cos($nang)),
-                    [int]($cy + $nrad * [Math]::Sin($nang))
-                )
-            }
-            $pulseT2 = ($t * 0.35) % 1.0
-            $npb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(190,$col.R,$col.G,$col.B))
-            for ($ni = 1; $ni -lt $nn; $ni++) {
-                $src2 = $netPts[0]; $dst2 = $netPts[$ni]
-                $calpha = [int](25 + 18 * [Math]::Sin($t * 0.3 + $ni))
-                $ncp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb($calpha,$col.R,$col.G,$col.B),1)
-                $g.DrawLine($ncp,$src2.X,$src2.Y,$dst2.X,$dst2.Y); $ncp.Dispose()
-                $pp3  = ($pulseT2 + $ni * 0.18) % 1.0
-                $ppx2 = [int]($src2.X + ($dst2.X-$src2.X)*$pp3)
-                $ppy2 = [int]($src2.Y + ($dst2.Y-$src2.Y)*$pp3)
-                $g.FillEllipse($npb,($ppx2-3),($ppy2-3),6,6)
-            }; $npb.Dispose()
-            $nnp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(180,$col.R,$col.G,$col.B),1)
-            $nlb = New-Object System.Drawing.SolidBrush($col)
-            for ($ni = 0; $ni -lt $nn; $ni++) {
-                $pos2  = $netPts[$ni]
-                $nnr   = if ($ni -eq 0) { 20 } else { 14 }
-                $nalph = [int](35 + 18 * [Math]::Sin($t * 0.4 + $ni))
-                $nnb   = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($nalph,$col.R,$col.G,$col.B))
-                $g.FillEllipse($nnb,($pos2.X-$nnr),($pos2.Y-$nnr),$nnr*2,$nnr*2)
-                $g.DrawEllipse($nnp,($pos2.X-$nnr),($pos2.Y-$nnr),$nnr*2,$nnr*2)
-                $nnb.Dispose()
-                $nlbl2 = if ($lbls[$ni].Length -gt 6) { $lbls[$ni].Substring(0,6) } else { $lbls[$ni] }
-                $nsz   = $g.MeasureString($nlbl2,$script:fnt7B)
-                $g.DrawString($nlbl2,$script:fnt7B,$nlb,($pos2.X-$nsz.Width/2),($pos2.Y-$nsz.Height/2))
-            }; $nnp.Dispose(); $nlb.Dispose()
-        }
-
-        'grid_world' {
-            # Animated grid — ranch management, placement, world systems
-            $p    = $script:simParams
-            $gcols = if ($p.cols) { [int]$p.cols } else { 8 }
-            $grows = if ($p.rows) { [int]$p.rows } else { 6 }
-            $col  = if ($p.color) { try { [System.Drawing.ColorTranslator]::FromHtml($p.color) } catch { $LOOP_COL } } else { $LOOP_COL }
-            $cellW2 = [int]($cw * 0.7 / $gcols)
-            $cellH2 = [int]($ch * 0.65 / $grows)
-            $gw2    = $gcols * $cellW2; $gh2 = $grows * $cellH2
-            $gsx    = [int]($cx - $gw2/2); $gsy = [int]($cy - $gh2/2)
-            $ggp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(18,255,255,255),1)
-            for ($gr = 0; $gr -le $grows; $gr++) {
-                $gy3 = $gsy + $gr * $cellH2
-                $g.DrawLine($ggp,$gsx,$gy3,($gsx+$gw2),$gy3)
-            }
-            for ($gc = 0; $gc -le $gcols; $gc++) {
-                $gx3 = $gsx + $gc * $cellW2
-                $g.DrawLine($ggp,$gx3,$gsy,$gx3,($gsy+$gh2))
-            }; $ggp.Dispose()
-            $entCols = @($col,$AMBER,$MECH_COL,$GREEN,$SYS_COL,$LOOP_COL)
-            for ($ei2 = 0; $ei2 -lt 6; $ei2++) {
-                $period2 = 2.5 + $ei2 * 0.6
-                $ecc = [int](($t / $period2 * $gcols) % $gcols)
-                $erc = ($ei2 * 2) % $grows
-                $eex = $gsx + $ecc * $cellW2 + [int]($cellW2 * 0.15)
-                $eey = $gsy + $erc * $cellH2 + [int]($cellH2 * 0.15)
-                $eew = [int]($cellW2 * 0.7); $eeh = [int]($cellH2 * 0.7)
-                $ec3 = $entCols[$ei2 % $entCols.Count]
-                $ealpha = [int](50 + 35 * [Math]::Sin($t * 0.7 + $ei2))
-                $eeb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($ealpha,$ec3.R,$ec3.G,$ec3.B))
-                $eep = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(180,$ec3.R,$ec3.G,$ec3.B),1)
-                $g.FillRectangle($eeb,$eex,$eey,$eew,$eeh)
-                $g.DrawRectangle($eep,$eex,$eey,$eew,$eeh)
-                $eeb.Dispose(); $eep.Dispose()
-            }
-        }
-
         'creature_chase' {
             # Combat — all GDI objects created once, reused, disposed at end
             $p    = $script:simParams
@@ -1554,7 +1802,7 @@ function Draw-Sim {
             # Hunter circle (reuse $brCyn/$penCyn)
             $g.FillEllipse($brCyn,($huX-11),($huY-11),22,22); $g.DrawEllipse($penCyn,($huX-11),($huY-11),22,22)
             # Labels (reuse $brTxt)
-            $tgt=[string](if($p.target){$p.target}else{"PREY"}); $hnt=[string](if($p.hunter){$p.hunter}else{"HUNTER"})
+            $tgt=[string]$(if($p.target){$p.target}else{"PREY"}); $hnt=[string]$(if($p.hunter){$p.hunter}else{"HUNTER"})
             $s1=$g.MeasureString($tgt,$script:fnt7B); $g.DrawString($tgt,$script:fnt7B,$brTxt,($crX-$s1.Width/2),($crY+18))
             $s2=$g.MeasureString($hnt,$script:fnt7B); $g.DrawString($hnt,$script:fnt7B,$brTxt,($huX-$s2.Width/2),($huY-28))
             $penRed.Dispose();$brRed.Dispose();$penCyn.Dispose();$brCyn.Dispose();$brTxt.Dispose()
@@ -1565,9 +1813,9 @@ function Draw-Sim {
             $p     = $script:simParams
             $col1  = if ($p.color1){try{[System.Drawing.ColorTranslator]::FromHtml($p.color1)}catch{$MECH_COL}}else{$MECH_COL}
             $col2  = if ($p.color2){try{[System.Drawing.ColorTranslator]::FromHtml($p.color2)}catch{$SYS_COL}}else{$SYS_COL}
-            $pAL   = [string](if($p.parentA){$p.parentA}else{"PARENT A"})
-            $pBL   = [string](if($p.parentB){$p.parentB}else{"PARENT B"})
-            $offL  = [string](if($p.offspring){$p.offspring}else{"OFFSPRING"})
+            $pAL   = [string]$(if($p.parentA){$p.parentA}else{"PARENT A"})
+            $pBL   = [string]$(if($p.parentB){$p.parentB}else{"PARENT B"})
+            $offL  = [string]$(if($p.offspring){$p.offspring}else{"OFFSPRING"})
             $aX=[int]($cx-$cw*0.22); $aY=[int]($cy-$ch*0.18)
             $bX=[int]($cx+$cw*0.22); $bY=$aY; $oX=$cx; $oY=[int]($cy+$ch*0.18)
             $pp   = ($t*0.55)%1.0; $fromA=([int]($t*0.55)%2 -eq 0)
@@ -1601,8 +1849,8 @@ function Draw-Sim {
             # Social — all GDI objects created once, reused, disposed at end
             $p   = $script:simParams
             $col = if($p.color){try{[System.Drawing.ColorTranslator]::FromHtml($p.color)}catch{$SYS_COL}}else{$SYS_COL}
-            $pL  = [string](if($p.player){$p.player}else{"PLAYER"})
-            $cL  = [string](if($p.creature){$p.creature}else{"CREATURE"})
+            $pL  = [string]$(if($p.player){$p.player}else{"PLAYER"})
+            $cL  = [string]$(if($p.creature){$p.creature}else{"CREATURE"})
             $plX=[int]($cx-$cw*0.28); $plY=$cy; $crX3=[int]($cx+$cw*0.28); $crY3=$cy
             $tr  = ($t%4.5)/4.5
             $bpX = [int]($plX+($crX3-$plX)*(($t*0.8)%1.0))
@@ -1634,10 +1882,10 @@ function Draw-Sim {
             # Economy — all GDI objects created once, reused, disposed at end
             $p    = $script:simParams
             $col  = if($p.color){try{[System.Drawing.ColorTranslator]::FromHtml($p.color)}catch{$AMBER}}else{$AMBER}
-            $item = [string](if($p.item){$p.item}else{"ITEM"})
-            $prce = [string](if($p.price){$p.price}else{"50G"})
-            $pL   = [string](if($p.player){$p.player}else{"PLAYER"})
-            $mL   = [string](if($p.merchant){$p.merchant}else{"MERCHANT"})
+            $item = [string]$(if($p.item){$p.item}else{"ITEM"})
+            $prce = [string]$(if($p.price){$p.price}else{"50G"})
+            $pL   = [string]$(if($p.player){$p.player}else{"PLAYER"})
+            $mL   = [string]$(if($p.merchant){$p.merchant}else{"MERCHANT"})
             $plX4=[int]($cx-$cw*0.30); $plY4=$cy; $mrX4=[int]($cx+$cw*0.30); $mrY4=$cy
             $iPh=($t*0.55)%1.0; $gPh=($t*0.55+0.5)%1.0
             $ipx=[int]($mrX4+($plX4-$mrX4)*$iPh); $ipy=[int]($mrY4+[Math]::Sin($iPh*[Math]::PI)*(-32))
@@ -1687,7 +1935,7 @@ function Draw-Sim {
                 }
                 $g.DrawRectangle($penGr,$cx2,$cy2,$cellW,$cellH)
             }
-            $eLbl=[string](if($p.label){$p.label}else{"EXPLORE"})
+            $eLbl=[string]$(if($p.label){$p.label}else{"EXPLORE"})
             $esz=$g.MeasureString($eLbl,$script:fnt8B); $g.DrawString($eLbl,$script:fnt8B,$brTxt,($cx-$esz.Width/2),($gsy+$gH+8))
             $penGr.Dispose();$brFog.Dispose();$brRev.Dispose();$brDot.Dispose();$brTxt.Dispose()
         }
@@ -1719,7 +1967,7 @@ function Draw-Sim {
                 $upY=[int]($encY+$encH+6); $upF=[int]($encW*(($t*0.18+$ei*0.88)%1.0))
                 $g.FillRectangle($brBg,$ex,$upY,$encW,7)
                 if($upF-gt 0){$g.FillRectangle($brBar,$ex,$upY,$upF,7)}
-                $lbl=[string](if($ei-lt $labels.Count){$labels[$ei]}else{"PEN "+[string][char](65+$ei)})
+                $lbl=[string]$(if($ei-lt $labels.Count){$labels[$ei]}else{"PEN "+[string][char](65+$ei)})
                 $lsz=$g.MeasureString($lbl,$script:fnt7B); $g.DrawString($lbl,$script:fnt7B,$brTxt,($ex+$encW/2-$lsz.Width/2),($upY+10))
             }
             $penE.Dispose();$brE.Dispose();$brDot.Dispose();$brBar.Dispose();$brBg.Dispose();$brTxt.Dispose()
@@ -1755,7 +2003,7 @@ function Draw-Sim {
                     $g.FillEllipse($brLf,($px-5),($gY-$stH-5),10,10)
                 } elseif ($ph -lt 0.84) {
                     $g.DrawLine($penSt,$px,$gY,$px,($gY-40))
-                    $g.FillEllipse($brLf,($px-18),($gY-26),$14,10);$g.FillEllipse($brLf,($px+4),($gY-26),14,10)
+                    $g.FillEllipse($brLf,($px-18),($gY-26),14,10);$g.FillEllipse($brLf,($px+4),($gY-26),14,10)
                     $g.FillEllipse($brFl,($px-7),($gY-47),14,14)
                 } else {
                     $g.DrawLine($penSt,$px,$gY,$px,($gY-44))
@@ -1789,7 +2037,7 @@ function Draw-Sim {
                 $isA=($si-eq $act)
                 if($isA){$g.FillRectangle($brAct,$qx,$qy,$qW,$qH);$g.DrawRectangle($penAct,$qx,$qy,$qW,$qH)}
                 else    {$g.FillRectangle($brDim,$qx,$qy,$qW,$qH);$g.DrawRectangle($penDim,$qx,$qy,$qW,$qH)}
-                $lbl=[string](if($si-lt $labels.Count){$labels[$si]}else{""})
+                $lbl=[string]$(if($si-lt $labels.Count){$labels[$si]}else{""})
                 $sz=$g.MeasureString($lbl,$script:fnt8B)
                 if($isA){$g.DrawString($lbl,$script:fnt8B,$brTAct,($qx+$qW/2-$sz.Width/2),($qy+$qH/2-$sz.Height/2))}
                 else    {$g.DrawString($lbl,$script:fnt8B,$brTDim,($qx+$qW/2-$sz.Width/2),($qy+$qH/2-$sz.Height/2))}
@@ -1830,6 +2078,25 @@ $stateTimer.Add_Tick({
         $script:nodeSelectedAt = [datetime]::MinValue
     }
 
+    # Timeout recovery: if Claude never calls generate_chassis.ps1 -Finalize
+    # (e.g. it hit a `denied:` on the first file and stopped, or crashed),
+    # chassis_path never gets set and the completion check below never fires —
+    # leaving GENERATE permanently stuck on "GENERATING..." with no escape but
+    # a full app relaunch. This check runs every tick (not gated on state.json
+    # changing) since a stuck Claude may never write to state.json again.
+    if ($btnChassis.Text -eq 'GENERATING...' -and $script:pendingGenerateTs -ne 0 -and
+        ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $script:pendingGenerateTs) -gt 300000) {
+        $script:lastGenerateTs    = $script:pendingGenerateTs
+        $script:pendingGenerateTs = 0
+        $btnChassis.Text = 'GENERATE'
+        Update-ChassisButton
+        [System.Windows.Forms.MessageBox]::Show(
+            "Chassis generation timed out after 5 minutes with no response.`n`nCheck Claude's output for errors, then try GENERATE again.",
+            "ValenTech", 'OK', 'Warning') | Out-Null
+        $descBox.ForeColor = $TEXT_MID
+        $descBox.Text = "Chassis generation timed out.`n`nSelect a concept node to continue."
+    }
+
     # Skip if state.json hasn't changed since last read
     $fi = Get-Item $STATE -ErrorAction SilentlyContinue
     if (-not $fi -or $fi.LastWriteTime -le $script:stateLastWrite) { return }
@@ -1838,24 +2105,54 @@ $stateTimer.Add_Tick({
     $resp    = [string]$obj.response
     $title   = [string]$obj.title
     $content = [string]$obj.content
-    $fwPath  = [string]$obj.framework_path
+    $chassisPath = [string]$obj.chassis_path
     $genTs   = [int64]0
     [int64]::TryParse([string]$obj.generate_ts, [ref]$genTs) | Out-Null
 
-    # FIX: detect completion via generate_ts (unique per request, written alongside
-    # framework_path — see generate_framework.ps1:32 / window.ps1:521) rather than
-    # framework_path itself. Regenerating the SAME GDD's framework produces an
-    # identical output path ("..\GDDs\${gddFileName}_Framework.md"), so comparing
-    # paths never re-fired: the GENERATE button stayed stuck on "GENERATING..."
-    # (disabled) and the saved-dialog/Notepad reopen never happened on a regenerate.
-    if ($fwPath -and $genTs -ne 0 -and $genTs -ne $script:lastGenerateTs) {
+    # Detect completion via generate_ts (set at GENERATE-click time, see the
+    # btnChassis click handler) combined with chassis_path (written only by
+    # generate_chassis.ps1's -Finalize call). Regenerating into the SAME folder
+    # produces an identical chassis_path, so comparing generate_ts (not the path)
+    # ensures the button reliably leaves "GENERATING..." and the folder reopens
+    # on a regenerate.
+    if ($chassisPath -and $genTs -ne 0 -and $genTs -ne $script:lastGenerateTs) {
         $script:lastGenerateTs    = $genTs
-        $script:lastFrameworkPath = $fwPath
-        $btnFramework.Text    = 'FRAMEWORK'
-        Update-FrameworkButton
+        $script:pendingGenerateTs = 0
+        $btnChassis.Text      = 'GENERATE'
+        Update-ChassisButton
         [System.Windows.Forms.MessageBox]::Show(
-            "Framework saved to:`n$fwPath`n`nOpening now...", "ValenTech", 'OK', 'Information') | Out-Null
-        Start-Process notepad.exe $fwPath
+            "Chassis generated in:`n$chassisPath`n`nOpening now...", "ValenTech", 'OK', 'Information') | Out-Null
+        Start-Process explorer.exe $chassisPath
+        $descBox.ForeColor = $TEXT_MID
+        $descBox.Text = "Chassis generated in:`n$chassisPath`n`nSelect a concept node to continue."
+    }
+
+    # Sync diff ready - show diff modal
+    $syncDiffTs = [int64]0
+    [int64]::TryParse([string]$obj.sync_diff_ts, [ref]$syncDiffTs) | Out-Null
+    if ($syncDiffTs -ne 0 -and $syncDiffTs -ne $script:lastSyncDiffTs -and $obj.sync_diff) {
+        $script:lastSyncDiffTs = $syncDiffTs
+        Show-SyncDiffModal $obj.sync_diff ([string]$obj.sync_path)
+    }
+
+    # Re-import data ready - show confirmation
+    $reimportDataTs = [int64]0
+    [int64]::TryParse([string]$obj.reimport_data_ts, [ref]$reimportDataTs) | Out-Null
+    if ($reimportDataTs -ne 0 -and $reimportDataTs -ne $script:lastReimportDataTs -and $obj.reimport_data) {
+        $script:lastReimportDataTs = $reimportDataTs
+        Show-ReimportConfirm $obj.reimport_data
+    }
+
+    # GDD export done - notify
+    $gddExportDoneTs = [int64]0
+    [int64]::TryParse([string]$obj.gdd_export_done_ts, [ref]$gddExportDoneTs) | Out-Null
+    if ($gddExportDoneTs -ne 0 -and $gddExportDoneTs -ne $script:lastGddExportTs) {
+        $script:lastGddExportTs = $gddExportDoneTs
+        $exportPath = [string]$obj.gdd_export_path
+        [System.Windows.Forms.MessageBox]::Show(
+            "GDD document saved to:`n$exportPath`n`nOpening now...",
+            "ValenTech", 'OK', 'Information') | Out-Null
+        try { Start-Process $exportPath } catch {}
     }
 
     # FIX (stale-proposal / wrong-node attribution race): propose_one.ps1 writes
@@ -1877,10 +2174,22 @@ $stateTimer.Add_Tick({
         # sim is stored as a proper JSON object — parse directly
         try {
             $simObj    = $obj.sim
-            $validSims = @('loop_diagram','progression_curve','economy_flow','feature_tree',
-                           'dna_helix','particle_swarm','stat_radar','network','grid_world',
-                           'creature_chase','gene_pool','bond_grow','market_flow',
-                           'world_discover','ranch_build','garden_cycle','season_turn')
+            # FIX (dead code / doc drift): this whitelist must mirror exactly the
+            # 12 types in CLAUDE.md's "Sim type guide" table (the only menu Claude
+            # picks -Sim from) AND the Draw-Sim switch cases below. It previously
+            # also listed economy_flow/dna_helix/particle_swarm/network/grid_world —
+            # five abstract-diagram sim types that commit 10d6ad7 deliberately
+            # retired in favour of "game-preview" replacements covering the same
+            # GDD categories (dna_helix->gene_pool, particle_swarm->creature_chase,
+            # network->bond_grow/market_flow, grid_world->ranch_build/world_discover,
+            # economy_flow->market_flow). Their Draw-Sim cases were dead — Claude can
+            # never propose a type CLAUDE.md doesn't mention, and nothing else ever
+            # sets $script:simType dynamically (grep confirms). Removed both the
+            # whitelist entries and their ~215 lines of unreachable case bodies.
+            # Order below now matches CLAUDE.md's table top-to-bottom for easy diffing.
+            $validSims = @('creature_chase','gene_pool','bond_grow','market_flow',
+                           'world_discover','ranch_build','garden_cycle','season_turn',
+                           'progression_curve','stat_radar','loop_diagram','feature_tree')
             if ($simObj -and $simObj.type -and $validSims -contains $simObj.type) {
                 $params = @{}
                 $simObj.PSObject.Properties | Where-Object { $_.Name -ne 'type' } | ForEach-Object { $params[$_.Name] = $_.Value }
